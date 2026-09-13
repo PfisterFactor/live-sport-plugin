@@ -3,9 +3,9 @@
  *
  * Programmatic server lifecycle management for Nuvio Live Sports Plugin:
  * - Checks if server is already running & healthy on specified port
- * - Spawns server process on isolated test port (default 7010 / resolver 7013)
+ * - Spawns server process on isolated test port (default 7010)
  * - Polls /health until readiness (200 OK)
- * - Provides graceful cross-platform teardown (handling child processes & resolver)
+ * - Provides graceful cross-platform teardown (handling child processes)
  * - Provides mock upstream HTTP server for deterministic HLS manifest & image tests
  */
 
@@ -16,7 +16,6 @@ const { request } = require('undici');
 
 const ROOT_DIR = path.resolve(__dirname, '..', '..');
 const DEFAULT_TEST_PORT = 7010;
-const DEFAULT_RESOLVER_PORT = 7013;
 const DEFAULT_HOST = '127.0.0.1';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -99,7 +98,6 @@ async function killProcessOnPort(port) {
  */
 async function startServer(options = {}) {
   const port = options.port || parseInt(process.env.TEST_PORT, 10) || DEFAULT_TEST_PORT;
-  const resolverPort = options.resolverPort || parseInt(process.env.TEST_RESOLVER_PORT, 10) || DEFAULT_RESOLVER_PORT;
   const host = options.host || DEFAULT_HOST;
   const baseUrl = `http://${host}:${port}`;
   const timeoutMs = options.timeoutMs || 25000;
@@ -113,7 +111,6 @@ async function startServer(options = {}) {
       return {
         isSpawned: false,
         port,
-        resolverPort,
         baseUrl,
         process: null,
         shutdown: async () => {
@@ -125,15 +122,13 @@ async function startServer(options = {}) {
 
   // Ensure ports are free before spawning fresh instance
   await killProcessOnPort(port);
-  await killProcessOnPort(resolverPort);
   await sleep(300);
 
   // 2. Spawn fresh instance with isolated environment
-  console.log(`[ServerRunner] Spawning server instance on port ${port} (resolver ${resolverPort})...`);
+  console.log(`[ServerRunner] Spawning server instance on port ${port}...`);
   const spawnEnv = {
     ...process.env,
     PORT: String(port),
-    RESOLVER_PORT: String(resolverPort),
     HOST: host,
     IP: host,
     NODE_ENV: 'test'
@@ -176,7 +171,6 @@ async function startServer(options = {}) {
   if (!isReady) {
     await killProcessTree(serverProc.pid);
     await killProcessOnPort(port);
-    await killProcessOnPort(resolverPort);
     throw new Error(`Server failed to become healthy at ${baseUrl} within ${timeoutMs}ms.\nOutput:\n${serverOutput}`);
   }
 
@@ -189,14 +183,12 @@ async function startServer(options = {}) {
       await killProcessTree(serverProc.pid);
     }
     await killProcessOnPort(port);
-    await killProcessOnPort(resolverPort);
     await sleep(300);
   };
 
   return {
     isSpawned: true,
     port,
-    resolverPort,
     baseUrl,
     process: serverProc,
     shutdown
@@ -318,6 +310,5 @@ module.exports = {
   killProcessOnPort,
   startMockUpstream,
   DEFAULT_TEST_PORT,
-  DEFAULT_RESOLVER_PORT,
   DEFAULT_HOST
 };

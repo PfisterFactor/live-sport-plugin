@@ -1,10 +1,3 @@
-/**
- * manifest.js — Stremio / Nuvio Addon Manifest (iptv-org edition)
- *
- * Single catalog: all free live sports channels from iptv-org,
- * with a search catalog so users can filter by channel name.
- */
-
 const { addonBuilder } = require('stremio-addon-sdk');
 
 const manifest = {

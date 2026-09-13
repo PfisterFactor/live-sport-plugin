@@ -1,10 +1,13 @@
 **/node_modules
-npm-debug.log
 .git
 .gitignore
 .env
 .DS_Store
 dist
+scripts
+tests
+docs
+.github
+*.md
 cloudflared.exe
-nuvio-proxy-2
-dist_wasm
+cloudflare-worker

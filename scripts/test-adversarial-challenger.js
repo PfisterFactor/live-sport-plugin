@@ -41,7 +41,6 @@ const fs = require('fs');
 const { startServer } = require('../tests/load/server-runner');
 
 const TEST_PORT = 7020;
-const TEST_RESOLVER_PORT = 7023;
 const MOCK_SERVER_PORT = 7029;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -150,7 +149,6 @@ async function runAdversarialStressTests() {
     console.log('🚀 [1/4] Booting Nuvio Live Sports Plugin Server on port', TEST_PORT);
     serverInstance = await startServer({
       port: TEST_PORT,
-      resolverPort: TEST_RESOLVER_PORT,
       reuseExisting: true
     });
     const baseUrl = serverInstance.baseUrl;

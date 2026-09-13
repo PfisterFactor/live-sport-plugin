@@ -25,10 +25,10 @@ jobs:
             git reset --hard origin/main
             
             # 3. Install new dependencies
-            npm install
+            bun install
             
             # 4. Build the project
-            npm run build
+            bun run build
             
             # 5. Restart the systemd service
             sudo systemctl restart nuvio.service

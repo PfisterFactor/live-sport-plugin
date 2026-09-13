@@ -119,11 +119,9 @@ async function runChallengerEndpointsStress() {
 
     // ─── 1. Spawn Live Express Server Instance ───────────────────────────────
     const TEST_PORT = 7020;
-    const TEST_RESOLVER_PORT = 7023;
     console.log(`[ServerRunner] Launching live test server on port ${TEST_PORT}...`);
     serverInstance = await startServer({
       port: TEST_PORT,
-      resolverPort: TEST_RESOLVER_PORT,
       reuseExisting: false
     });
     const baseUrl = serverInstance.baseUrl;

@@ -26,7 +26,7 @@
 > - **Solana (SOL):** `CmuehW4PQn4yyQeXqguEpR3DjXwPPdS9Qqo4W5aWN8UU`
 > - **Bitcoin (BTC):** `bc1q9dd4nflxx8ja0vzy2phzsf8h9tr6590txgd07u`
 
-A production-grade live sports streaming add-on for [Nuvio](https://nuvio.tv) and [Stremio](https://www.stremio.com/). It serves as a powerful multi-source aggregator that provides native live sports streams (Football, Basketball, Motorsport, Cricket, and more) inside your client, utilizing an advanced internal stream resolver to bypass CORS restrictions.
+A production-grade live sports streaming add-on for [Nuvio](https://nuvio.tv) and [Stremio](https://www.stremio.com/). It serves as a powerful multi-source aggregator that provides native live sports streams (Football, Basketball, Motorsport, Cricket, and more) inside your client.
 
 ---
 
@@ -67,9 +67,9 @@ The addon is now available at `http://localhost:7000` (or `http://YOUR_SERVER_IP
    ```bash
    git clone https://github.com/rajhodedara/live-sport-plugin.git
    cd live-sport-plugin
-   npm install
-   npm run build
-   npm start
+   bun install
+   bun run build
+   bun run start
    ```
 
 2. **Access from other Devices on the Same Wi-Fi (Phone, TV, another Laptop):**
@@ -101,14 +101,13 @@ The addon is now available at `http://localhost:7000` (or `http://YOUR_SERVER_IP
 # Clone and build
 git clone https://github.com/rajhodedara/live-sport-plugin.git
 cd live-sport-plugin
-npm install
-npm run build
+bun install
+bun run build
 
-# Install PM2 and start the service
-npm install -g pm2
-pm2 start dist/index.js --name "nuvio-sports"
-pm2 save
-pm2 startup
+# Run under PM2 via bunx (no global install required)
+bunx pm2 start dist/index.js --name "nuvio-sports"
+bunx pm2 save
+bunx pm2 startup
 ```
 
 ---
@@ -146,7 +145,7 @@ pm2 startup
 
 Before setting up the project locally:
 - **Node.js**: Version `22.0.0` or higher (LTS recommended)
-- **npm**: Version `10.0.0` or higher (bundled with Node.js)
+- **Bun**: Version `1.1.0` or higher ([bun.sh](https://bun.sh/))
 - **Git**: Installed and accessible from your terminal
 
 ---
@@ -181,20 +180,20 @@ Through the interactive `/configure` UI (or via URL-safe base64 config segments)
 
 ## 🧪 Testing & Verification Suites
 
-The project features a multi-tiered test suite including unit tests, adversarial stress tests, and automated Stremio client simulations:
+The project ships standalone verification runners covering provider sanity, a simulated Stremio client, 24/7 channel endpoints, and live upstream health:
 
 ```bash
-# Run unit & service test suites with Jest
-npm test
+# Zero-cache provider sanity run
+bun run test:sanity
 
-# Run simulated Stremio client E2E test (verifies manifest, catalogs, and streams)
-npm run test:e2e-client
-
-# Run live upstream scraper health check across all providers
-npm run check-sources
+# Simulated Stremio client E2E test (verifies manifest, catalogs, and streams)
+bun run test:e2e-client
 
 # Validate 24/7 channel and live TV endpoints
-npm run test:247
+bun run test:247
+
+# Live upstream scraper health check across all providers
+bun run check-sources
 ```
 
 ---

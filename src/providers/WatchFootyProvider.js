@@ -1,6 +1,8 @@
 const BaseProvider = require('./BaseProvider');
+const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
+const { findEmbedIframe } = require('./embedIframe');
 const { parseTimezone } = require('../timezone');
 
 class WatchFootyProvider extends BaseProvider {
@@ -12,16 +14,16 @@ class WatchFootyProvider extends BaseProvider {
     this.apiUrl = 'https://api.watchfooty.st/api/v1/matches/all';
     
     this.fetchMain = this.circuitBreaker.wrap(`${this.name}_fetchMain`, async () => {
-      const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' };
-      const res = await this.proxyFetch(this.apiUrl, { headers, signal: AbortSignal.timeout(10000) });
+      const headers = { 'User-Agent': DEFAULT_UA };
+      const res = await this.proxyFetch(this.apiUrl, { headers, timeoutMs: 10000 });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       return await res.json();
     });
 
     this.fetchMatchDetails = this.circuitBreaker.wrap(`${this.name}_fetchMatch`, async (matchId) => {
       const url = `https://api.watchfooty.st/api/v1/match/${matchId}`;
-      const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' };
-      const res = await this.proxyFetch(url, { headers, signal: AbortSignal.timeout(10000) });
+      const headers = { 'User-Agent': DEFAULT_UA };
+      const res = await this.proxyFetch(url, { headers, timeoutMs: 10000 });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       return await res.json();
     });
@@ -106,7 +108,7 @@ class WatchFootyProvider extends BaseProvider {
                   request: {
                     "Origin": "https://watchfooty.st",
                     "Referer": "https://watchfooty.st/",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+                    "User-Agent": DEFAULT_UA
                   }
                 }
               };
@@ -114,42 +116,22 @@ class WatchFootyProvider extends BaseProvider {
             } else if (s.url.includes('sportsembed.su') || s.url.includes('watchfooty.st/embed')) {
               let resolvedViaIframe = false;
               try {
-                const { safeFetch } = require('../impitClient');
-                const htmlRes = await safeFetch(s.url, {
-                  headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Referer': 'https://watchfooty.st/',
-                    'Accept': 'text/html'
-                  },
-                  timeoutMs: 6000
+                const htmlRes = await this.proxyFetch(s.url, {
+                  headers: { 'User-Agent': DEFAULT_UA, 'Referer': 'https://watchfooty.st/', 'Accept': 'text/html' },
+                  timeoutMs: 6000,
                 });
-                const html = await htmlRes.text();
-                const iframeMatch = html.match(/src="(https?:\/\/[^"]+)"/g);
-                if (iframeMatch) {
-                  for (const attr of iframeMatch) {
-                    const srcMatch = attr.match(/src="(https?:\/\/[^"]+)"/);
-                    if (!srcMatch) continue;
-                    const iframeSrc = srcMatch[1];
-                    try {
-                      const iframeHost = new URL(iframeSrc).hostname;
-                      if (['embedindia.st', 'embedindia.com', 'embedsport.xyz'].includes(iframeHost)) {
-                        console.log(`[WatchFootyProvider] Detected iframe redirect -> ${iframeSrc} for ${matchTitle}. Resolving via iframe provider.`);
-                        const iframeReferer = new URL(iframeSrc).origin + '/';
-                        
-                        if (iframeSrc.includes('embedindia') && this.embedIndiaProvider) {
-                            const indiaStreams = await this.embedIndiaProvider.resolveStream(iframeSrc, matchCategory, matchTitle, { referer: iframeReferer });
-                            if (indiaStreams.length > 0) {
-                                indiaStreams.forEach(s => {
-                                    s.name = 'WatchFooty';
-                                    s.title = s.title.replace('EmbedIndia', 'WatchFooty');
-                                });
-                                streams.push(...indiaStreams);
-                                resolvedViaIframe = true;
-                                break;
-                            }
-                        }
-                      }
-                    } catch (_) {}
+                const iframeSrc = findEmbedIframe(await htmlRes.text(), ['embedindia.st', 'embedindia.com', 'embedsport.xyz']);
+                if (iframeSrc && iframeSrc.includes('embedindia') && this.embedIndiaProvider) {
+                  console.log(`[WatchFootyProvider] Detected iframe redirect -> ${iframeSrc} for ${matchTitle}. Resolving via iframe provider.`);
+                  const iframeReferer = new URL(iframeSrc).origin + '/';
+                  const indiaStreams = await this.embedIndiaProvider.resolveStream(iframeSrc, matchCategory, matchTitle, { referer: iframeReferer });
+                  if (indiaStreams.length > 0) {
+                    indiaStreams.forEach((st) => {
+                      st.name = 'WatchFooty';
+                      st.title = st.title.replace('EmbedIndia', 'WatchFooty');
+                    });
+                    streams.push(...indiaStreams);
+                    resolvedViaIframe = true;
                   }
                 }
               } catch (e) {

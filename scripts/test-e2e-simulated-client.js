@@ -15,7 +15,6 @@ const path = require('path');
 const { startServer } = require('../tests/load/server-runner');
 
 const TEST_PORT = 7010;
-const TEST_RESOLVER_PORT = 7013;
 
 const SIMULATED_HOSTS = [
   { 
@@ -69,7 +68,6 @@ async function runE2ESimulatedClient() {
     console.log('📦 [Phase 1] Booting / Connecting to Plugin Server...');
     serverInstance = await startServer({
       port: TEST_PORT,
-      resolverPort: TEST_RESOLVER_PORT,
       reuseExisting: true
     });
     const baseUrl = serverInstance.baseUrl;

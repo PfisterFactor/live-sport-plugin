@@ -1,94 +1,72 @@
 const container = require('./container');
 
-// Source selection (shared by handleStream and prewarmMatch)
+/**
+ * Single source of truth for every selectable stream source: sort priority,
+ * container registration, display label, whether it is on by default, and the
+ * provider call shape (some providers take the raw source object as 4th arg).
+ */
+const SOURCES = {
+  watchfooty: { priority: 2, registration: 'watchFootyProvider', label: 'WatchFooty', defaultEnabled: true, referer: 'https://watchfooty.st/' },
+  cdnlive: { priority: 3, registration: 'cdnLiveProvider', label: 'CDNLiveTV', defaultEnabled: true, referer: 'https://cdnlivetv.tv/' },
+  streamsports99: { priority: 4, registration: 'streamSports99Provider', label: 'StreamSports99', defaultEnabled: true, referer: 'https://streamsports99.fun/' },
+  streamic: { priority: 5, registration: 'streamicProvider', label: 'Streamic', defaultEnabled: true, passSrc: true, referer: 'https://streamic.st/' },
+  streamfree: {
+    priority: 8,
+    registration: 'streamFreeProvider',
+    label: 'StreamFree',
+    defaultEnabled: true,
+    args: (src, match) => [src.id, src.original_category || match.category, match.title],
+  },
+  timstreams: { priority: 9, registration: 'timStreamsProvider', label: 'TimStreams', defaultEnabled: true },
+  sportyhunter: { priority: 12, registration: 'sportyHunterProvider', label: 'SportyHunter', defaultEnabled: true, referer: 'https://sportyhunter.xyz/' },
+  embedindia: { priority: 15, registration: 'embedIndiaProvider', label: 'EmbedIndia', defaultEnabled: false, passSrc: true },
+  embedst: { priority: 1.5, registration: 'embedStProvider', label: 'Embed.st', defaultEnabled: true, passSrc: true },
+  streamedpk: { priority: 1.5, registration: 'streamedPkProvider', label: 'Streamed.pk', defaultEnabled: true, passSrc: true, referer: 'https://embed.st/' },
+};
+
+// Unknown sources are likely new Streamed.pk sub-sources - 1.5 keeps them near the top.
+const UNKNOWN_PRIORITY = 1.5;
+
+const REFERER_BY_LABEL = Object.fromEntries(
+  Object.values(SOURCES).filter(s => s.referer).map(s => [s.label, s.referer])
+);
+
 function selectSources(matchSources, config) {
-  const SOURCE_PRIORITY = { admin: 1, echo: 1, golf: 1, delta: 1, 'watchfooty': 2, 'cdnlive': 3, 'streamsports99': 4, 'streamic': 5, 'streamfree': 8, 'timstreams': 9, 'sportyhunter': 12, 'streamsports': 13, 'iptv-org': 14, 'embedindia': 15 };
-  const sortedSources = [...matchSources].sort((a, b) => {
-    // Unknown sources that are not known fallback providers are likely new
-    // Streamed.pk sources - priority 1.5 keeps them near the top.
-    const getPriority = (src) => SOURCE_PRIORITY[src] ?? (['watchfooty', 'cdnlive', 'streamsports99', 'streamic', 'streamfree', 'timstreams', 'sportyhunter', 'streamsports', 'iptv-org'].includes(src) ? 99 : 1.5);
-    const pa = getPriority(a.source);
-    const pb = getPriority(b.source);
-    if (pa !== pb) return pa - pb;
-    return 0;
+  const sorted = [...matchSources].sort((a, b) => {
+    const pa = SOURCES[a.source]?.priority ?? UNKNOWN_PRIORITY;
+    const pb = SOURCES[b.source]?.priority ?? UNKNOWN_PRIORITY;
+    return pa - pb;
   });
 
   if (config && typeof config.sources === 'string' && config.sources !== 'none') {
     const enabled = config.sources.split(',');
-    const KNOWN_FALLBACKS = ['watchfooty', 'cdnlive', 'streamsports99', 'streamic', 'streamfree', 'timstreams', 'sportyhunter', 'streamsports', 'iptv-org', 'embedindia', 'embedst', 'streamedpk'];
-    return sortedSources.filter(src => KNOWN_FALLBACKS.includes(src.source) && enabled.includes(src.source));
+    return sorted.filter(src => SOURCES[src.source] && enabled.includes(src.source));
   }
 
-  const KNOWN_FALLBACKS = ['watchfooty', 'cdnlive', 'streamsports99', 'streamic', 'streamfree', 'timstreams', 'sportyhunter', 'streamsports', 'iptv-org', 'embedst', 'streamedpk'];
-  return sortedSources.filter(src => KNOWN_FALLBACKS.includes(src.source));
+  return sorted.filter(src => SOURCES[src.source]?.defaultEnabled);
 }
 
-// Resolve a single source (extracted from handleStream, logic unchanged)
-async function resolveSource(src, match, config) {
+async function resolveSource(src, match) {
+  const entry = SOURCES[src.source];
+  if (!entry) return [];
+
   const streamScorer = container.resolve('streamScorer');
-  const sourceName = src.source;
   let resStreams = [];
 
   try {
-    if (sourceName === 'streamfree') {
-      const provider = container.resolve('streamFreeProvider');
-      const sfCategory = src.original_category || match.category;
-      resStreams = await provider.resolveStream(src.id, sfCategory, match.title);
-    } else if (sourceName === 'timstreams') {
-      const provider = container.resolve('timStreamsProvider');
-      resStreams = await provider.resolveStream(src.id, match.category, match.title);
-    } else if (sourceName === 'sportyhunter') {
-      const provider = container.resolve('sportyHunterProvider');
-      resStreams = await provider.resolveStream(src.id, match.category, match.title);
-
-    } else if (sourceName === 'watchfooty') {
-      const provider = container.resolve('watchFootyProvider');
-      resStreams = await provider.resolveStream(src.id, match.category, match.title);
-    } else if (sourceName === 'cdnlive') {
-      const provider = container.resolve('cdnLiveProvider');
-      resStreams = await provider.resolveStream(src.id, match.category, match.title);
-    } else if (sourceName === 'streamsports99') {
-      const provider = container.resolve('streamSports99Provider');
-      resStreams = await provider.resolveStream(src.id, match.category, match.title);
-    } else if (sourceName === 'streamic') {
-      const provider = container.resolve('streamicProvider');
-      resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
-    } else if (sourceName === 'iptv-org') {
-      const proxyHeaders = {};
-      if (src.user_agent) proxyHeaders['User-Agent'] = src.user_agent;
-      if (src.referrer) proxyHeaders['Referer'] = src.referrer;
-
-      resStreams = [{
-        name: 'Nuvio Direct',
-        title: `24/7 TV (${src.quality || 'Auto'})`,
-        url: src.url,
-        resolution: src.quality,
-        behaviorHints: {
-          proxyHeaders: {
-            request: proxyHeaders
-          }
-        }
-      }];
-    } else if (sourceName === 'embedindia') {
-      const provider = container.resolve('embedIndiaProvider');
-      resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
-    } else if (sourceName === 'embedst') {
-      const provider = container.resolve('embedStProvider');
-      resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
-    } else if (sourceName === 'streamedpk') {
-      const provider = container.resolve('streamedPkProvider');
-      resStreams = await provider.resolveStream(src.id, match.category, match.title, src);
-    } else {
-      // Unknown or unsupported source, ignore
-      resStreams = [];
-    }
+    const args = entry.args
+      ? entry.args(src, match)
+      : entry.passSrc
+        ? [src.id, match.category, match.title, src]
+        : [src.id, match.category, match.title];
+    resStreams = await container.resolve(entry.registration).resolveStream(...args);
 
     for (const s of resStreams) {
-      s.score = streamScorer.calculateScore(s, sourceName);
-      s._source = sourceName;
+      s.score = streamScorer.calculateScore(s, src.source);
+      s._source = src.source;
     }
   } catch (e) {
-    console.warn(`[streams.js] Error resolving ${sourceName} for ${src.id}:`, e.message);
+    console.warn(`[streams.js] Error resolving ${src.source} for ${src.id}:`, e.message);
   }
 
   return resStreams;
@@ -204,10 +182,10 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache) {
 
 // Mint streams for a single source and health-verify them before they enter the
 // cache, so verification runs once per mint instead of on every request.
-async function mintVerifiedSources(src, match, config, cacheKey) {
+async function mintVerifiedSources(src, match, cacheKey) {
   const resolveCache = container.resolve('streamResolveCache');
   const m3u8Parser = container.resolve('m3u8Parser');
-  const minted = await resolveSource(src, match, config);
+  const minted = await resolveSource(src, match);
   return verifyStreams(minted, cacheKey, m3u8Parser, resolveCache);
 }
 
@@ -223,7 +201,7 @@ async function prewarmMatch(match, config, topN = 3) {
     await Promise.allSettled(targets.map(src => {
       const key = `${src.source}:${match.id}:${src.id}`;
       if (resolveCache.get(key)) return Promise.resolve(null);
-      return resolveCache.getOrCreate(key, () => mintVerifiedSources(src, match, config || null, key));
+      return resolveCache.getOrCreate(key, () => mintVerifiedSources(src, match, key));
     }));
   } catch (err) {
     console.warn('[Prewarm] failed:', err.message);
@@ -255,7 +233,7 @@ async function handleStream(type, id, config) {
 
   const resolvePromises = activeSources.map(async (src) => {
     const key = `${src.source}:${matchId}:${src.id}`;
-    const minted = await resolveCache.getOrCreate(key, () => mintVerifiedSources(src, match, config, key));
+    const minted = await resolveCache.getOrCreate(key, () => mintVerifiedSources(src, match, key));
     return minted.map((s) => ({ ...s, _cacheKey: key }));
   });
 
@@ -280,7 +258,6 @@ async function handleStream(type, id, config) {
         const resolved = await resolveCache.getOrCreate(key, () => mintVerifiedSources(
           { source: 'streamfree', id: channel.id, original_category: 'cricket' },
           { category: 'cricket', title: channel.title },
-          config,
           key
         ));
         return resolved.map((s) => ({ ...s, _cacheKey: key }));
@@ -302,13 +279,7 @@ async function handleStream(type, id, config) {
   };
   const icon = sportIcons[match.category] || '📡';
   
-  const niceNames = {
-    streamfree: 'StreamFree', timstreams: 'TimStreams',
-    sportyhunter: 'SportyHunter', streamsports: 'StreamSports',
-    'iptv-org': 'Direct IPTV', 'streamsports99': 'StreamSports99',
-    'streamic': 'Streamic',
-    'embedindia': 'EmbedIndia', 'embedst': 'Embed.st', 'streamedpk': 'Streamed.pk'
-  };
+  const niceNames = Object.fromEntries(Object.entries(SOURCES).map(([k, v]) => [k, v.label]));
 
   streams.forEach(s => {
     let quality = s.resolution || s.quality || 'Auto';
@@ -318,19 +289,18 @@ async function handleStream(type, id, config) {
     }
     
     const isWeb = !!s.externalUrl || s.name === 'Nuvio Web Player';
-    // The scorer attached the sourceName as _source in calculateScore? No, we didn't attach it.
-    // Wait, streamScorer doesn't attach sourceName to s.
-    // I can determine providerName from the string it already had.
-    let providerName = niceNames[s._source] || niceNames[Object.keys(niceNames).find(k => s.title && s.title.toLowerCase().includes(k))] || 'Streamed.pk';
-    
-    if (s.title && s.title.toLowerCase().includes('timstreams')) providerName = 'TimStreams';
-    else if (s.title && s.title.toLowerCase().includes('sporty')) providerName = 'SportyHunter';
-    else if (s.title && s.title.toLowerCase().includes('streamfree')) providerName = 'StreamFree';
-    else if (s.title && s.title.toLowerCase().includes('watchfooty')) providerName = 'WatchFooty';
-    else if (s.title && s.title.toLowerCase().includes('cdnlive')) providerName = 'CDNLiveTV';
-    else if (s.title && s.title.toLowerCase().includes('streamsports99')) providerName = 'StreamSports99';
-    else if (s.title && s.title.toLowerCase().includes('streamic')) providerName = 'Streamic';
-    else if (s.title && s.title.toLowerCase().includes('24/7')) providerName = 'Direct IPTV';
+    const titleText = (s.title || '').toLowerCase();
+    let providerName = niceNames[s._source]
+      || niceNames[Object.keys(niceNames).find(k => titleText.includes(k))]
+      || 'Streamed.pk';
+
+    if (titleText.includes('timstreams')) providerName = 'TimStreams';
+    else if (titleText.includes('sporty')) providerName = 'SportyHunter';
+    else if (titleText.includes('streamfree')) providerName = 'StreamFree';
+    else if (titleText.includes('watchfooty')) providerName = 'WatchFooty';
+    else if (titleText.includes('cdnlive')) providerName = 'CDNLiveTV';
+    else if (titleText.includes('streamsports99')) providerName = 'StreamSports99';
+    else if (titleText.includes('streamic')) providerName = 'Streamic';
 
     let originalTitle = s.title || '';
     let channelName = '';
@@ -358,7 +328,8 @@ async function handleStream(type, id, config) {
     }
     
     const channelDisplay = channelName ? ` | 📺 ${channelName}` : '';
-    s.title = `${icon} ${providerName}${channelDisplay}\n📺 Quality: ${quality}${viewersText}`;
+    const bitrateDisplay = s.bitrate ? ` | ${s.bitrate}` : '';
+    s.title = `${icon} ${providerName}${channelDisplay}\n📺 Quality: ${quality}${bitrateDisplay}${viewersText}`;
     
     // Add behaviorHints to group streams and handle CORS for direct streams
     s.behaviorHints = s.behaviorHints || {};
@@ -366,33 +337,12 @@ async function handleStream(type, id, config) {
     
     // If it's a direct m3u8 stream and not routed through our proxy, mark it notWebReady
     if (s.url && s.url.includes('.m3u8') && !s.url.includes('/api/manifest')) {
-      if (providerName !== 'Direct IPTV') {
-        s.behaviorHints.notWebReady = true;
+      s.behaviorHints.notWebReady = true;
+
+      const referer = REFERER_BY_LABEL[providerName];
+      if (referer && !s.behaviorHints.proxyHeaders) {
+        s.behaviorHints.proxyHeaders = { request: { Referer: referer, Origin: referer } };
       }
-      
-      let referer = '';
-      if (providerName === 'Streamed.pk') referer = 'https://embed.st/';
-      else if (providerName === 'WatchFooty') referer = 'https://watchfooty.st/';
-      else if (providerName === 'CDNLiveTV') referer = 'https://cdnlivetv.tv/';
-      else if (providerName === 'Streamic') referer = 'https://streamic.st/';
-      else if (providerName === 'StreamSports99' || providerName === 'StreamSports') referer = 'https://streamsports99.fun/';
-      else if (providerName === 'SportyHunter') referer = 'https://sportyhunter.xyz/';
-      
-      if (referer) {
-        if (!s.behaviorHints.proxyHeaders) {
-          s.behaviorHints.proxyHeaders = {
-            request: {
-              "Referer": referer,
-              "Origin": referer
-            }
-          };
-        }
-      }
-    }
-    
-    // Add extra info if present
-    if (providerName === 'Direct IPTV' && s.url) {
-      s.title = `📺 ${channelName || '24/7 Live Network'}\n⚙️ Quality: ${quality}`;
     }
   });
 

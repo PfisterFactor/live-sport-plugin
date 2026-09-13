@@ -6,11 +6,6 @@
  *
  * Architecture (per multi-agent review — decision log D-01 through D-08):
  *
- *  Tier 1 — Server-side extraction (for non-CF-protected domains only):
- *    Attempt to fetch the embed HTML from the server and run the EmbedExtractorChain.
- *    Short-circuits after the first failure for 5 minutes (failureCache / D-08).
- *    Uses direct fetch(), NOT proxyFetch(), to preserve CF Worker quota (D-04).
- *
  *  Tier 2 — Client-side extraction via enhanced /watch page (D-05):
  *    Returns externalUrl → /watch?mode=extract&embed=<url>
  *    The browser fetches /api/proxy-embed, runs extraction client-side, plays via hls.js.
@@ -39,11 +34,6 @@ const CF_PROTECTED_DOMAINS = new Set([
   'embedindia.com',
   'embedsport.xyz',
 ]);
-
-// 🕵️
-// Server-side User-Agent string (realistic Chrome on Windows)
-// 🕵️
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
 
 class EmbedIndiaProvider extends BaseProvider {
   constructor(opts) {

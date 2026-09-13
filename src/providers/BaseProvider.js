@@ -5,6 +5,8 @@ const CF_PROXY_POOL = [];
 // unavailable (ARM64 VPS, Alpine/musl Linux, certain Windows Server builds).
 const { safeFetch: _safeFetch } = require('../impitClient');
 
+const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
+
 // Pick a random proxy from the pool
 function getCfProxyUrl() {
   if (process.env.NODE_ENV === 'test') return null;
@@ -43,6 +45,7 @@ class BaseProvider {
       cat = cat.name || cat.title || 'other';
     }
     cat = String(cat).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (cat.includes('ncaa') || cat.includes('college')) return 'college';
     if (cat.includes('americanfootball') || cat.includes('nfl') || cat.includes('afl') || cat.includes('gridiron')) return 'american_football';
     if (cat.includes('soccer') || cat.includes('football')) return 'football';
     if (cat.includes('motor') || cat.includes('racing') || cat.includes('cycling') || cat.includes('f1')) return 'motorsport';
@@ -85,19 +88,13 @@ class BaseProvider {
       url = proxyUrl.toString();
     }
     
-    // safeFetch tries impit first (browser TLS fingerprint), falls back to
-    // undici automatically — works on Windows, Linux x64, ARM64, musl, etc.
-
-    const reqOptions = {
-      method: options.method || 'GET',
+    const { timeoutMs = 15000, signal, ...rest } = options;
+    return await _safeFetch(url, {
+      method: 'GET',
+      ...rest,
       headers: options.headers || {},
-      body: options.body,
-      timeoutMs: 15000,
-    };
-
-    // safeFetch tries impit first (browser TLS fingerprint), falls back to
-    // undici automatically — works on Windows, Linux x64, ARM64, musl, etc.
-    return await _safeFetch(url, reqOptions);
+      timeoutMs,
+    });
   }
 
   /**
@@ -111,3 +108,5 @@ class BaseProvider {
 
 module.exports = BaseProvider;
 module.exports.getCfProxyUrl = getCfProxyUrl;
+module.exports.DEFAULT_UA = DEFAULT_UA;
+BaseProvider.DEFAULT_UA = DEFAULT_UA;

@@ -111,7 +111,6 @@ async function runChallengerVerification() {
     mockUpstream = await startMockUpstream();
     serverInstance = await startServer({
       port: 7080,
-      resolverPort: 7083,
       reuseExisting: false
     });
 

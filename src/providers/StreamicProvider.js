@@ -1,4 +1,5 @@
 const BaseProvider = require('./BaseProvider');
+const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 
@@ -8,7 +9,7 @@ class StreamicProvider extends BaseProvider {
     this.name = 'Streamic';
     this.apiUrl = 'https://streamic.st/api/J.php';
     this.fetchData = this.circuitBreaker.wrap(`${this.name}_fetch`, async () => {
-      const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36' };
+      const headers = { 'User-Agent': DEFAULT_UA };
       let lastErr;
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {

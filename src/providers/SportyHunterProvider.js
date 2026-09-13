@@ -1,4 +1,3 @@
-const { safeFetch } = require('../impitClient');
 const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
@@ -10,7 +9,7 @@ class SportyHunterProvider extends BaseProvider {
     this.baseUrl = 'https://sportyhunter.xyz';
     
     this.fetchData = this.circuitBreaker.wrap(`${this.name}_fetch`, async () => {
-      const res = await this.proxyFetch(this.baseUrl, { signal: AbortSignal.timeout(15000) });
+      const res = await this.proxyFetch(this.baseUrl, { timeoutMs: 15000 });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.text();
     });

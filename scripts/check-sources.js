@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { request } = require('undici');
 
 const sources = [
   { name: 'WatchFooty', url: 'https://api.watchfooty.st/api/v1/matches/football' },
@@ -10,7 +10,6 @@ const sources = [
   { name: 'SportyHunter', url: 'https://sportyhunter.xyz' },
   { name: 'PPV / BinTv', url: 'https://api.ppv.st/api/streams' },
   { name: 'NTV', url: 'http://ntv.cx' },
-  { name: 'IptvOrg', url: 'https://iptv-org.github.io/api/channels.json' },
   { name: 'CdnLive', url: 'https://api.cdnlivetv.tv/api/v1/events/sports/?user=cdnlivetv&plan=free' }
 ];
 
@@ -19,14 +18,14 @@ async function checkSources() {
   
   const results = await Promise.allSettled(sources.map(async (source) => {
     try {
-      const response = await axios.get(source.url, { timeout: 10000 });
-      return { ...source, status: 'OK', statusCode: response.status };
+      const response = await request(source.url, { method: 'GET', headersTimeout: 10000, bodyTimeout: 10000 });
+      response.body.dump();
+      if (response.statusCode >= 400) {
+        return { ...source, status: 'FAILED', error: `HTTP ${response.statusCode}` };
+      }
+      return { ...source, status: 'OK', statusCode: response.statusCode };
     } catch (error) {
-      return { 
-        ...source, 
-        status: 'FAILED', 
-        error: error.response ? `HTTP ${error.response.status}` : error.message 
-      };
+      return { ...source, status: 'FAILED', error: error.message };
     }
   }));
 

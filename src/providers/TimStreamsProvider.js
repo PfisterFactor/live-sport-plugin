@@ -1,5 +1,5 @@
-const { safeFetch } = require('../impitClient');
 const BaseProvider = require('./BaseProvider');
+const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const { parseTimezone } = require('../timezone');
 const { BASE_URL } = require('../config');
@@ -11,7 +11,7 @@ class TimStreamsProvider extends BaseProvider {
     this.apiUrl = 'https://timst.cfd/api/live-upcoming';
     
     this.fetchData = this.circuitBreaker.wrap(`${this.name}_fetch`, async () => {
-      const res = await this.proxyFetch(this.apiUrl, { signal: AbortSignal.timeout(15000) });
+      const res = await this.proxyFetch(this.apiUrl, { timeoutMs: 15000 });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     });
@@ -128,11 +128,8 @@ class TimStreamsProvider extends BaseProvider {
   async extractM3u8(embedUrl) {
     try {
       const res = await this.proxyFetch(embedUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-          'Referer': 'https://timst.cfd/'
-        },
-        signal: AbortSignal.timeout(10000)
+        headers: { 'User-Agent': DEFAULT_UA, 'Referer': 'https://timst.cfd/' },
+        timeoutMs: 10000
       });
 
       if (!res.ok) return null;

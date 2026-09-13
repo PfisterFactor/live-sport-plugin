@@ -1,20 +1,17 @@
 @echo off
 title Nuvio Live Sports Plugin
 
-:: Check if Node.js is installed
-where node >nul 2>nul
+where bun >nul 2>nul
 if %errorlevel% neq 0 (
-    echo [ERROR] Node.js is not installed!
-    echo Please download and install Node.js from https://nodejs.org/
+    echo [ERROR] Bun is not installed!
+    echo Please install Bun from https://bun.sh/
     pause
     exit /b
 )
 
-echo [Nuvio] Installing dependencies if needed...
-call npm install
+call bun install || goto :end
+call bun run build || goto :end
+call bun run start
 
-echo.
-echo [Nuvio] Starting the server...
-call npm start
-
+:end
 pause

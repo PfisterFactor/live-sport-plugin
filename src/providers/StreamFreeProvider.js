@@ -1,4 +1,5 @@
 const BaseProvider = require('./BaseProvider');
+const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 
@@ -11,7 +12,7 @@ class StreamFreeProvider extends BaseProvider {
     this.fetchData = this.circuitBreaker.wrap(
       this.name + '_fetchMain',
       async () => {
-        const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36' };
+        const headers = { 'User-Agent': DEFAULT_UA };
         // proxyFetch: undici done right (statusCode) + Impit fallback + redirect following
         const res = await this.proxyFetch(this.apiUrl, { headers });
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -21,7 +22,7 @@ class StreamFreeProvider extends BaseProvider {
     this.embedFetcher = this.circuitBreaker.wrap(
       this.name + '_fetchEmbed',
       async (url) => {
-        const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36' };
+        const headers = { 'User-Agent': DEFAULT_UA };
         // NOTE: deliberately no Referer - StreamFree blocks embed requests that carry one
         const res = await this.proxyFetch(url, { headers });
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -31,7 +32,7 @@ class StreamFreeProvider extends BaseProvider {
     this.streamKeyFetcher = this.circuitBreaker.wrap(
       this.name + '_fetchStreamKey',
       async (url) => {
-        const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36' };
+        const headers = { 'User-Agent': DEFAULT_UA };
         const res = await this.proxyFetch(url, { headers });
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         return await res.json();
@@ -81,7 +82,6 @@ class StreamFreeProvider extends BaseProvider {
     try {
       const { safeFetch } = require('../impitClient');
       const { BASE_URL } = require('../config');
-      const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
       const resScore = (q) => { const m = String(q).match(/(\d+)/); return m ? parseInt(m[1], 10) : 0; };
 
       // ── Step 1: Find all available sources from stream-status ────────────────
@@ -89,7 +89,7 @@ class StreamFreeProvider extends BaseProvider {
       let availableSources = [];
       try {
         const statusRes = await safeFetch(`https://streamfree.top/api/stream-status/${sourceId}`, {
-          headers: { 'User-Agent': UA },
+          headers: { 'User-Agent': DEFAULT_UA },
           timeoutMs: 8000
         });
         if (statusRes.status === 200) {

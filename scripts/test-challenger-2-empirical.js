@@ -14,7 +14,6 @@ const fs = require('fs');
 const path = require('path');
 
 const TEST_PORT = 7010;
-const TEST_RESOLVER_PORT = 7013;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -40,7 +39,6 @@ async function main() {
     console.log('📦 Connecting/Starting plugin server...');
     serverInstance = await startServer({
       port: TEST_PORT,
-      resolverPort: TEST_RESOLVER_PORT,
       reuseExisting: true
     });
     const baseUrl = serverInstance.baseUrl;

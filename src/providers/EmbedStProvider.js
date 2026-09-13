@@ -1,5 +1,7 @@
 const BaseProvider = require('./BaseProvider');
+const { DEFAULT_UA } = BaseProvider;
 const StreamEntity = require('../domain/StreamEntity');
+const { findEmbedIframe } = require('./embedIframe');
 const { execFile } = require('child_process');
 const path = require('path');
 
@@ -43,52 +45,32 @@ class EmbedStProvider extends BaseProvider {
     const IFRAME_FALLBACK_DOMAINS = ['embedindia.st', 'embedindia.com', 'embedsport.xyz', 'sportsembed.su'];
     if (streams.length === 0 && !embedUrl.includes('sportsembed.su')) {
       try {
-        const { safeFetch } = require('../impitClient');
-        const dispatcher = new (require('undici').Agent)({ keepAliveTimeout: 15000, keepAliveMaxTimeout: 30000, connect: { timeoutMs: 15000 } });
-        const htmlRes = await safeFetch(embedUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-            'Referer': referer,
-            'Accept': 'text/html'
-          },
-          dispatcher,
-          bodyTimeout: 6000,
-          headersTimeout: 6000
+        const htmlRes = await this.proxyFetch(embedUrl, {
+          headers: { 'User-Agent': DEFAULT_UA, 'Referer': referer, 'Accept': 'text/html' },
+          timeoutMs: 6000,
         });
-        const html = await htmlRes.text();
-        // Match <iframe src="https://embedindia.st/..."> pattern
-        const iframeMatch = html.match(/src="(https:\/\/([^/"]+)[^"]+)"/g);
-        if (iframeMatch) {
-          for (const attr of iframeMatch) {
-            const srcMatch = attr.match(/src="(https?:\/\/[^"]+)"/);
-            if (!srcMatch) continue;
-            const iframeSrc = srcMatch[1];
-            try {
-              const iframeHost = new URL(iframeSrc).hostname;
-              if (IFRAME_FALLBACK_DOMAINS.includes(iframeHost)) {
-                console.log(`[${this.name}] Detected iframe redirect -> ${iframeSrc} for ${matchTitle}. Resolving via iframe provider.`);
-                const iframeReferer = new URL(iframeSrc).origin + '/';
-                
-                if (iframeSrc.includes('embedindia') && this.embedIndiaProvider) {
-                      const indiaStreams = await this.embedIndiaProvider.resolveStream(iframeSrc, matchCategory, matchTitle, { referer: iframeReferer });
-                      if (indiaStreams.length > 0) {
-                          indiaStreams.forEach(s => {
-                              s.name = this.name;
-                              s.title = s.title.replace('EmbedIndia', this.name);
-                          });
-                          streams.push(...indiaStreams);
-                          break;
-                      }
-                  }
-                
-                streams.push(new StreamEntity({
-                  name: 'EmbedSt',
-                  title: `${matchTitle} (Live)`,
-                  externalUrl: `/watch?mode=extract&embed=${encodeURIComponent(iframeSrc)}&referer=${encodeURIComponent(iframeReferer)}&title=${encodeURIComponent(matchTitle || 'Live Event')}`
-                }));
-                break; // only use first matching iframe
-              }
-            } catch (_) {}
+        const iframeSrc = findEmbedIframe(await htmlRes.text(), IFRAME_FALLBACK_DOMAINS);
+        if (iframeSrc) {
+          console.log(`[${this.name}] Detected iframe redirect -> ${iframeSrc} for ${matchTitle}. Resolving via iframe provider.`);
+          const iframeReferer = new URL(iframeSrc).origin + '/';
+
+          if (iframeSrc.includes('embedindia') && this.embedIndiaProvider) {
+            const indiaStreams = await this.embedIndiaProvider.resolveStream(iframeSrc, matchCategory, matchTitle, { referer: iframeReferer });
+            if (indiaStreams.length > 0) {
+              indiaStreams.forEach((s) => {
+                s.name = this.name;
+                s.title = s.title.replace('EmbedIndia', this.name);
+              });
+              streams.push(...indiaStreams);
+            }
+          }
+
+          if (streams.length === 0) {
+            streams.push(new StreamEntity({
+              name: 'EmbedSt',
+              title: `${matchTitle} (Live)`,
+              externalUrl: `/watch?mode=extract&embed=${encodeURIComponent(iframeSrc)}&referer=${encodeURIComponent(iframeReferer)}&title=${encodeURIComponent(matchTitle || 'Live Event')}`
+            }));
           }
         }
       } catch (e) {

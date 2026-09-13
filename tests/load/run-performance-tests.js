@@ -31,7 +31,6 @@ function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
     port: 7010,
-    resolverPort: 7013,
     concurrencyMultiplier: 0.2,
     reuseExisting: true
   };
@@ -39,8 +38,6 @@ function parseArgs() {
   for (const arg of args) {
     if (arg.startsWith('--port=')) {
       options.port = parseInt(arg.split('=')[1], 10);
-    } else if (arg.startsWith('--resolver-port=')) {
-      options.resolverPort = parseInt(arg.split('=')[1], 10);
     } else if (arg.startsWith('--concurrency-multiplier=')) {
       options.concurrencyMultiplier = parseFloat(arg.split('=')[1]);
     } else if (arg === '--fresh' || arg === '--no-reuse') {
@@ -147,7 +144,6 @@ async function main() {
     console.log('\n⚙️ [Setup] Starting / Connecting Nuvio Live Sports Server...');
     serverInstance = await startServer({
       port: options.port,
-      resolverPort: options.resolverPort,
       reuseExisting: options.reuseExisting,
       timeoutMs: 180000
     });

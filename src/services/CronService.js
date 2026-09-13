@@ -84,23 +84,6 @@ class CronService {
       this.streamResolveCache.pruneEnded(ids);
     } catch (_) {}
   }
-
-  /** Prewarm popular live matches so hot streams are "already running" when clicked. */
-  async prewarmPopular() {
-    try {
-      // Lazy requires avoid a require cycle (catalog -> streams -> container -> this).
-      const { isMatchLive } = require('../catalog');
-      const { prewarmMatch } = require('../streams');
-      const matches = this.cacheService ? this.cacheService.getMatches() : [];
-      const hot = matches.filter(m => m.popular === '1' && isMatchLive(m));
-      if (hot.length === 0) return;
-      console.log(`[CronService] Prewarming ${Math.min(hot.length, 10)} popular live matches...`);
-      await Promise.allSettled(hot.slice(0, 10).map(m => prewarmMatch(m, null)));
-    } catch (err) {
-      console.error('[CronService] Prewarm failed:', err.message);
-    }
-  }
-
 }
 
 module.exports = CronService;

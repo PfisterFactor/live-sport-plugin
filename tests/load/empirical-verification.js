@@ -38,7 +38,6 @@ async function runEmpiricalTests() {
 
     serverInstance = await startServer({
       port: 7090,
-      resolverPort: 7093,
       reuseExisting: false
     });
     console.log(`✅ Nuvio server active at ${serverInstance.baseUrl}`);

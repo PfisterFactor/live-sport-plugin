@@ -235,9 +235,6 @@ class MatchAggregator {
         else if (existing.team1 && !existing.team1.logo && match.team1 && match.team1.logo) existing.team1.logo = match.team1.logo;
         if (!existing.team2 && match.team2) existing.team2 = match.team2;
         else if (existing.team2 && !existing.team2.logo && match.team2 && match.team2.logo) existing.team2.logo = match.team2.logo;
-        if (existing.description === 'No description' && match.description && match.description !== 'No description') {
-          existing.description = match.description;
-        }
 
         // Canonical naming: prefer a team-vs-team fixture title over a
         // channel-like listing title, so the merged event keeps the most

@@ -1,7 +1,7 @@
 # Project: Nuvio Live Sports Plugin — Dynamic Host Routing, Thumbnail Repair, & E2E Sanity Testing
 
 ## Architecture
-Nuvio Live Sports Plugin is a Stremio v1 protocol addon built with Node.js/Express. It aggregates live sports fixtures and 24/7 sports TV channels from multiple providers (StreamedPk, StreamFree, WatchFooty, SportyHunter, TimStreams, IptvOrg, etc.), transforms them into Stremio catalogs/metadata/streams, and proxies media streams and images safely.
+Nuvio Live Sports Plugin is a Stremio v1 protocol addon built with Node.js/Express. It aggregates live sports fixtures and 24/7 sports TV channels from multiple providers (StreamedPk, StreamFree, WatchFooty, SportyHunter, TimStreams, CdnLive, etc.), transforms them into Stremio catalogs/metadata/streams, and proxies media streams and images safely. Paths in this document are relative to the repository root (one level above `docs/`).
 
 ### Key Subsystems:
 1. **Host & Routing Layer (`src/config.js`, `src/index.js`)**:
@@ -44,4 +44,4 @@ Nuvio Live Sports Plugin is a Stremio v1 protocol addon built with Node.js/Expre
 - `src/services/MatchAggregator.js`: Deduplication logic preserving image assets.
 - `src/providers/*.js`: Provider scrapers with normalized image and proxy URLs.
 - `scripts/test-e2e-simulated-client.js`: Automated E2E test runner.
-- `package.json`: NPM test scripts and dependencies.
+- `package.json`: Test scripts and dependencies (run with `bun run <script>`).

@@ -1,4 +1,5 @@
 const BaseProvider = require('./BaseProvider');
+const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 
@@ -12,11 +13,8 @@ class StreamedPkProvider extends BaseProvider {
 
     this.fetchMatches = this.circuitBreaker.wrap(`${this.name}_fetchMatches`, async () => {
       const res = await this.proxyFetch(`${this.apiUrl}/matches/all`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-          'Accept': 'application/json'
-        },
-        signal: AbortSignal.timeout(15000)
+        headers: { 'User-Agent': DEFAULT_UA, 'Accept': 'application/json' },
+        timeoutMs: 15000
       });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       return await res.json();
@@ -24,11 +22,8 @@ class StreamedPkProvider extends BaseProvider {
 
     this.fetchLiveMatches = this.circuitBreaker.wrap(`${this.name}_fetchLiveMatches`, async () => {
       const res = await this.proxyFetch(`${this.apiUrl}/matches/live`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-          'Accept': 'application/json'
-        },
-        signal: AbortSignal.timeout(10000)
+        headers: { 'User-Agent': DEFAULT_UA, 'Accept': 'application/json' },
+        timeoutMs: 10000
       });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       return await res.json();
@@ -37,11 +32,8 @@ class StreamedPkProvider extends BaseProvider {
     this.fetchStreams = this.circuitBreaker.wrap(`${this.name}_fetchStreams`, async (source, id) => {
       const url = `${this.apiUrl}/stream/${encodeURIComponent(source)}/${encodeURIComponent(id)}`;
       const res = await this.proxyFetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-          'Accept': 'application/json'
-        },
-        signal: AbortSignal.timeout(10000)
+        headers: { 'User-Agent': DEFAULT_UA, 'Accept': 'application/json' },
+        timeoutMs: 10000
       });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       return await res.json();
