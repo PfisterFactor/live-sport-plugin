@@ -1,16 +1,13 @@
-const { createContainer, asClass, asValue, InjectionMode } = require('awilix');
-
 const CacheService = require('./services/CacheService');
 const CircuitBreakerService = require('./services/CircuitBreakerService');
 const CronService = require('./services/CronService');
 const M3U8ParserService = require('./services/M3U8ParserService');
 const MatchAggregator = require('./services/MatchAggregator');
 const StreamScoringService = require('./services/StreamScoringService');
+const StreamResolveCache = require('./services/StreamResolveCache');
 const StreamFreeProvider = require('./providers/StreamFreeProvider');
 const TimStreamsProvider = require('./providers/TimStreamsProvider');
-// const IptvOrgProvider = require('./providers/IptvOrgProvider'); // disabled: 24/7 channels removed
 const SportyHunterProvider = require('./providers/SportyHunterProvider');
-
 const WatchFootyProvider = require('./providers/WatchFootyProvider');
 const CdnLiveProvider = require('./providers/CdnLiveProvider');
 const StreamSports99Provider = require('./providers/StreamSports99Provider');
@@ -19,43 +16,47 @@ const EmbedIndiaProvider = require('./providers/EmbedIndiaProvider');
 const EmbedStProvider = require('./providers/EmbedStProvider');
 const StreamedPkProvider = require('./providers/StreamedPkProvider');
 
-const YamlProviderBuilder = require('./services/YamlProviderBuilder');
-const StreamResolveCache = require('./services/StreamResolveCache');
+const registrations = {
+  cacheService: (c) => new CacheService(c),
+  circuitBreaker: (c) => new CircuitBreakerService(c),
+  m3u8Parser: (c) => new M3U8ParserService(c),
+  cronService: (c) => new CronService(c),
+  matchAggregator: (c) => new MatchAggregator(c),
+  streamScorer: (c) => new StreamScoringService(c),
+  streamResolveCache: () => new StreamResolveCache(),
+  streamFreeProvider: (c) => new StreamFreeProvider(c),
+  timStreamsProvider: (c) => new TimStreamsProvider(c),
+  sportyHunterProvider: (c) => new SportyHunterProvider(c),
+  watchFootyProvider: (c) => new WatchFootyProvider(c),
+  cdnLiveProvider: (c) => new CdnLiveProvider(c),
+  streamSports99Provider: (c) => new StreamSports99Provider(c),
+  streamicProvider: (c) => new StreamicProvider(c),
+  embedIndiaProvider: (c) => new EmbedIndiaProvider(c),
+  embedStProvider: (c) => new EmbedStProvider(c),
+  streamedPkProvider: (c) => new StreamedPkProvider(c),
+};
 
-const container = createContainer({
-  injectionMode: InjectionMode.PROXY
+const instances = new Map();
+
+/**
+ * Lazy singleton registry. Each factory receives the cradle, whose properties
+ * resolve other registrations on access, so constructors can destructure
+ * their dependencies by name.
+ */
+const cradle = new Proxy({}, {
+  get: (_, name) => resolve(name),
+  has: (_, name) => name in registrations,
+  ownKeys: () => Object.keys(registrations),
+  getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }),
 });
 
-// Register Core Services
-container.register({
-  cacheService: asClass(CacheService).singleton(),
-  circuitBreaker: asClass(CircuitBreakerService).singleton(),
-  m3u8Parser: asClass(M3U8ParserService).singleton(),
-  cronService: asClass(CronService).singleton(),
-  matchAggregator: asClass(MatchAggregator).singleton(),
-  streamScorer: asClass(StreamScoringService).singleton(),
-  streamResolveCache: asValue(new StreamResolveCache())
-});
+function resolve(name) {
+  if (instances.has(name)) return instances.get(name);
+  const factory = registrations[name];
+  if (!factory) throw new Error(`Could not resolve '${String(name)}'.`);
+  const instance = factory(cradle);
+  instances.set(name, instance);
+  return instance;
+}
 
-// Build dynamic YAML Providers
-const yamlBuilder = new YamlProviderBuilder();
-const yamlProviders = yamlBuilder.buildProviders(container, container.resolve('circuitBreaker'));
-
-// Register Providers
-container.register({
-  streamFreeProvider: asClass(StreamFreeProvider).singleton(),
-  timStreamsProvider: asClass(TimStreamsProvider).singleton(),
-  // iptvOrgProvider: asClass(IptvOrgProvider).singleton(), // disabled: 24/7 channels removed
-  sportyHunterProvider: asClass(SportyHunterProvider).singleton(),
-
-  watchFootyProvider: asClass(WatchFootyProvider).singleton(),
-  cdnLiveProvider: asClass(CdnLiveProvider).singleton(),
-  streamSports99Provider: asClass(StreamSports99Provider).singleton(),
-  streamicProvider: asClass(StreamicProvider).singleton(),
-  embedIndiaProvider: asClass(EmbedIndiaProvider).singleton(),
-  embedStProvider: asClass(EmbedStProvider).singleton(),
-  streamedPkProvider: asClass(StreamedPkProvider).singleton(),
-  yamlProviders: asValue(yamlProviders)
-});
-
-module.exports = container;
+module.exports = { resolve, registrations, cradle };

@@ -6,37 +6,23 @@
   "scripts": {
     "start": "node dist/index.js",
     "dev": "node --watch-path=src src/index.js",
-    "build": "npx @vercel/ncc build src/index.js -o dist --minify && npx -y copyfiles -f \"src/providers/*.wasm\" \"src/providers/*.js\" dist",
-    "test": "jest",
+    "build": "ncc build src/index.js -o dist --minify && copyfiles -f \"src/providers/*.wasm\" \"src/providers/*.js\" dist",
+    "test:sanity": "node scripts/test-sanity-zero-cache.js",
     "test:e2e-client": "node scripts/test-e2e-simulated-client.js",
-    "test:sanity": "node scripts/test-e2e-simulated-client.js",
     "test:247": "node scripts/test-247-channels.js",
-    "generate:provider": "node scripts/generate-provider.js",
     "check-sources": "node scripts/check-sources.js"
   },
   "dependencies": {
-    "acorn": "^8.18.0",
-    "awilix": "^13.0.5",
     "big-integer": "^1.6.52",
-    "cheerio": "^1.2.0",
-    "cors": "^2.8.5",
-    "curl-impersonate": "^0.0.0",
-    "dotenv": "^17.4.2",
     "express": "^4.18.2",
-    "got-scraping": "^4.2.1",
-    "happy-dom": "^20.11.1",
-    "http-proxy-middleware": "^4.2.0",
-    "impit": "^0.14.3",
-    "jest": "^30.4.2",
-    "js-yaml": "^5.2.2",
-    "jsdom": "^29.1.1",
-    "lz-string": "^1.5.0",
+    "impit": "0.14.4",
     "m3u8-parser": "^7.2.0",
-    "nock": "^14.0.16",
-    "node-cron": "^4.6.0",
-    "opossum": "^10.0.0",
     "stremio-addon-sdk": "^1.6.10",
     "undici": "^8.10.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.3",
+    "copyfiles": "^2.4.1"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -48,9 +34,5 @@
     "live-sports",
     "sports-streaming"
   ],
-  "license": "MIT",
-  "overrides": {
-    "glob": "^11.0.0",
-    "inflight": "^1.0.6"
-  }
+  "license": "MIT"
 }

@@ -35,7 +35,7 @@ async function runSanitySuite() {
   }
 
   // 1. Container Registrations Check
-  console.log('👉 1. Testing Awilix Container Dependency Graph...');
+  console.log('👉 1. Testing Container Dependency Graph...');
   const expectedServices = [
     'circuitBreaker',
     'm3u8Parser',
@@ -44,7 +44,6 @@ async function runSanitySuite() {
     'streamScorer',
     'streamFreeProvider',
     'timStreamsProvider',
-    'iptvOrgProvider',
     'sportyHunterProvider',
     'watchFootyProvider',
     'cdnLiveProvider',
@@ -52,8 +51,7 @@ async function runSanitySuite() {
     'streamicProvider',
     'embedIndiaProvider',
     'embedStProvider',
-    'streamedPkProvider',
-    'yamlProviders'
+    'streamedPkProvider'
   ];
 
   for (const name of expectedServices) {

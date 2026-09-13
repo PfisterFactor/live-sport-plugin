@@ -13,9 +13,8 @@
  */
 
 const express = require('express');
-const cors    = require('cors');
 const { getRouter } = require('stremio-addon-sdk');
-const { createProxyMiddleware } = require('http-proxy-middleware');
+const { request: undiciRequest } = require('undici');
 const child_process = require('child_process');
 const path = require('path');
 
@@ -72,8 +71,6 @@ function shutdownResolver() {
     console.log('Shutting down Stream Resolver...');
     resolverProcess.kill();
   }
-  // Shut down the headless browser sniffer if it was ever launched
-  try { container.resolve('browserSniffer').shutdown(); } catch (_) {}
 }
 process.on('exit', shutdownResolver);
 process.on('SIGINT', () => { shutdownResolver(); process.exit(0); });
@@ -90,7 +87,18 @@ builder.defineStreamHandler(({ type, id, config })         => handleStream(type,
 const app = express();
 
 app.set('trust proxy', true);
-app.use(cors());
+
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE');
+  if (req.method === 'OPTIONS') {
+    const requested = req.headers['access-control-request-headers'];
+    if (requested) res.setHeader('Access-Control-Allow-Headers', requested);
+    res.setHeader('Content-Length', '0');
+    return res.status(204).end();
+  }
+  next();
+});
 
 // Serve the web debugger UI and Configuration Page
 app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }));
@@ -397,18 +405,29 @@ app.get('/api/proxy-embed', async (req, res) => {
 
 
 // Mount the HLS Video Proxy (routes to the internal resolver on port RESOLVER_PORT)
-app.use('/api', createProxyMiddleware({
-  target: `http://127.0.0.1:${RESOLVER_PORT}/api`,
-  changeOrigin: true,
-  xfwd: true,
-  logLevel: 'debug',
-  onError: (err, req, res) => {
+app.use('/api', async (req, res) => {
+  const headers = { ...req.headers, 'x-forwarded-for': req.ip, 'x-forwarded-proto': req.protocol, 'x-forwarded-host': req.headers.host };
+  delete headers.host;
+  delete headers.connection;
+  try {
+    const upstream = await undiciRequest(`http://127.0.0.1:${RESOLVER_PORT}/api${req.url}`, {
+      method: req.method,
+      headers,
+      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : req,
+    });
+    res.status(upstream.statusCode);
+    for (const [name, value] of Object.entries(upstream.headers)) {
+      if (name !== 'transfer-encoding') res.setHeader(name, value);
+    }
+    upstream.body.on('error', () => res.destroy());
+    upstream.body.pipe(res);
+  } catch (err) {
     console.error('[Proxy Error] Failed to proxy /api request to internal resolver:', err.message);
     if (!res.headersSent) {
       res.status(502).send('Bad Gateway: Internal stream resolver is not responding.');
     }
   }
-}));
+});
 
 // ─── Universal Dynamic Base URL Response Rewriter ─────────────────────────────
 // Intercepts /manifest.json, /catalog/*, /meta/*, and /stream/* responses to

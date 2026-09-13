@@ -4,6 +4,7 @@ npm-debug.log
 .gitignore
 .env
 .DS_Store
-dist/impit-node.win32-x64-msvc.node
+dist
+cloudflared.exe
 nuvio-proxy-2
 dist_wasm

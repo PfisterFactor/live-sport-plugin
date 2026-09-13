@@ -1,8 +1,8 @@
-const cron = require('node-cron');
-
 // Catalog stale-while-revalidate window: once the cache is older than this,
 // the next catalog/meta request triggers a background re-sync (see ensureFresh).
 const REVALIDATE_AFTER_MS = parseInt(process.env.CATALOG_REVALIDATE_MS, 10) || 10 * 60 * 1000;
+const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const KEEP_ALIVE_INTERVAL_MS = 14 * 60 * 1000;
 
 class CronService {
   constructor({ matchAggregator, streamResolveCache, cacheService }) {
@@ -41,32 +41,20 @@ class CronService {
 
   start() {
     console.log('[CronService] Starting background jobs...');
-    
-    // Fetch and cache matches every 4 hours
-    cron.schedule('0 */4 * * *', async () => {
+
+    setInterval(async () => {
       console.log('[CronService] Running match sync job...');
       try {
         await this.runSync();
       } catch (err) {
         console.error('[CronService] Match sync failed:', err.message);
       }
-    });
+    }, SYNC_INTERVAL_MS).unref();
 
-    // Prewarm popular live matches - disabled for local home/tunnel hosting
-    // to prevent hammering upstream streaming sites and keep network silent.
-    // cron.schedule('*/3 * * * *', async () => {
-    //   try {
-    //     await this.prewarmPopular();
-    //   } catch (err) {
-    //     console.error('[CronService] Prewarm job failed:', err.message);
-    //   }
-    // });
-
-    // Run first sync immediately on boot
     const externalUrl = process.env.RENDER_EXTERNAL_URL;
     if (externalUrl) {
       console.log(`[CronService] Keep-alive enabled for ${externalUrl}`);
-      cron.schedule('*/14 * * * *', async () => {
+      setInterval(async () => {
         try {
           console.log(`[CronService] Pinging external URL to prevent sleep...`);
           const { request } = require('undici');
@@ -74,7 +62,7 @@ class CronService {
         } catch (err) {
           console.error('[CronService] Keep-alive ping failed:', err.message);
         }
-      });
+      }, KEEP_ALIVE_INTERVAL_MS).unref();
     }
 
     // Run first sync immediately on boot

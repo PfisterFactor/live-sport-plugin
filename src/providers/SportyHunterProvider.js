@@ -1,5 +1,4 @@
 const { safeFetch } = require('../impitClient');
-const cheerio = require('cheerio');
 const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
@@ -23,10 +22,8 @@ class SportyHunterProvider extends BaseProvider {
       const html = await this.fetchData.fire();
       if (!html) return [];
 
-      const $ = cheerio.load(html);
-      
-      // Next.js injects page data into a script tag
-      const nextDataJson = $('#__NEXT_DATA__').html();
+      const nextDataMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
+      const nextDataJson = nextDataMatch ? nextDataMatch[1] : null;
       if (nextDataJson) {
         const nextData = JSON.parse(nextDataJson);
         const pageProps = nextData?.props?.pageProps || {};

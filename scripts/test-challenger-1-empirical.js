@@ -39,12 +39,11 @@ async function runChallengerVerification() {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // PART 1: Awilix DI Container Resolution (20 Registrations)
+  // PART 1: DI Container Resolution (17 Registrations)
   // ─────────────────────────────────────────────────────────────
-  console.log('👉 [Part 1] Awilix DI Container 20-Singleton Resolution Verification');
-  
+  console.log('👉 [Part 1] DI Container 17-Singleton Resolution Verification');
+
   const expectedRegistrations = [
-    // 7 Core Services
     'cacheService',
     'circuitBreaker',
     'm3u8Parser',
@@ -52,23 +51,19 @@ async function runChallengerVerification() {
     'matchAggregator',
     'streamScorer',
     'streamResolveCache',
-    // 13 Providers / Builders
     'streamFreeProvider',
     'timStreamsProvider',
-    'iptvOrgProvider',
     'sportyHunterProvider',
     'watchFootyProvider',
     'cdnLiveProvider',
     'streamSports99Provider',
     'streamicProvider',
-    'strims24Provider',
     'embedIndiaProvider',
     'embedStProvider',
-    'streamedPkProvider',
-    'yamlProviders'
+    'streamedPkProvider'
   ];
 
-  assert('Container has exactly 20 registered dependencies', Object.keys(container.registrations).length === 20, `Found ${Object.keys(container.registrations).length}`);
+  assert('Container has exactly 17 registered dependencies', Object.keys(container.registrations).length === 17, `Found ${Object.keys(container.registrations).length}`);
 
   for (const regName of expectedRegistrations) {
     let resolvedInstance = null;

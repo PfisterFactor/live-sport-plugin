@@ -63,16 +63,11 @@ async function runTests() {
     });
   });
 
-  test(`Container resolves 'yamlProviders' as array`, () => {
-    const yamlP = container.resolve('yamlProviders');
-    assert.ok(Array.isArray(yamlP), 'yamlProviders should be an array');
-  });
-
-  test(`Container resolves 'matchAggregator' with 10 direct providers + YamlProviders`, () => {
+  test(`Container resolves 'matchAggregator' with 8 direct providers`, () => {
     const aggregator = container.resolve('matchAggregator');
     assert.ok(aggregator, 'matchAggregator should be resolved');
     assert.ok(Array.isArray(aggregator.providers), 'aggregator.providers should be an array');
-    assert.strictEqual(aggregator.providers.length >= 10, true, `Aggregator should have at least 10 providers registered, got ${aggregator.providers.length}`);
+    assert.strictEqual(aggregator.providers.length, 8, `Aggregator should have 8 providers registered, got ${aggregator.providers.length}`);
   });
 
   test(`Assert 'beinArabicProvider' is NOT registered in DI container`, () => {
