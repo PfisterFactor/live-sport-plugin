@@ -2,7 +2,7 @@ const BaseProvider = require('./BaseProvider');
 const { DEFAULT_UA } = BaseProvider;
 const StreamEntity = require('../domain/StreamEntity');
 const { findEmbedIframe } = require('./embedIframe');
-const { execFile } = require('child_process');
+const { runProviderScript } = require('./runner');
 const path = require('path');
 
 class EmbedStProvider extends BaseProvider {
@@ -91,18 +91,11 @@ class EmbedStProvider extends BaseProvider {
         if (user && event && id && !embedUrl.includes('sportsembed.su')) {
           console.log(`[${this.name}] Decrypting native WASM for ${user}/${event}/${id}...`);
 
-          const m3u8Url = await new Promise((resolve) => {
-            // Using __dirname ensures it works when bundled by ncc into dist/
-            const scriptPath = path.join(__dirname, 'run_wasm_native.js');
-            execFile('node', [scriptPath, user, event, id, embedUrl], { timeoutMs: 15000 }, (error, stdout) => {
-              if (error) {
-                console.error(`[${this.name}] Native WASM execution failed:`, error.message);
-                return resolve(null);
-              }
-              const urlMatch = stdout.match(/https:\/\/[^\s"]+\.m3u8/);
-              resolve(urlMatch ? urlMatch[0] : null);
-            });
-          });
+          // Using __dirname ensures it works when bundled by ncc into dist/
+          const scriptPath = path.join(__dirname, 'run_wasm_native.js');
+          const stdout = await runProviderScript(scriptPath, [user, event, id, embedUrl]);
+          const urlMatch = stdout.match(/https:\/\/[^\s"]+\.m3u8/);
+          const m3u8Url = urlMatch ? urlMatch[0] : null;
 
           if (m3u8Url) {
             console.log(`[${this.name}] Natively decrypted M3U8 for ${matchTitle}: ${m3u8Url}`);

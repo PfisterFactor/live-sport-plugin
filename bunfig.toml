@@ -1,0 +1,5 @@
+[install]
+frozenLockfile = true
+ignoreScripts = true
+exact = true
+minimumReleaseAge = 604800

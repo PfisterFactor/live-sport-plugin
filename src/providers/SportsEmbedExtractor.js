@@ -105,15 +105,9 @@ async function extractSportsEmbed(embedUrl) {
         body: protoBytes
     };
     
-    if (impit) {
-        resp = await impit.fetch('https://sportsembed.su/api/get', fetchArgs);
-    } else {
-        const https = require('https');
-        const keepAliveAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 10000 });
-        const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-        fetchArgs.agent = keepAliveAgent;
-        resp = await fetch('https://sportsembed.su/api/get', fetchArgs);
-    }
+    resp = impit
+        ? await impit.fetch('https://sportsembed.su/api/get', fetchArgs)
+        : await fetch('https://sportsembed.su/api/get', fetchArgs);
     
     const resBuf = Buffer.from(await resp.arrayBuffer());
     if (resBuf.length < 50) throw new Error('API Blocked / Forbidden: ' + resBuf.toString());

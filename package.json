@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node dist/index.js",
     "dev": "node --watch-path=src src/index.js",
-    "build": "ncc build src/index.js -o dist --minify && copyfiles -f \"src/providers/*.wasm\" \"src/providers/*.js\" dist",
+    "build": "ncc build src/index.js -o dist --minify && bun scripts/copy-providers.js",
     "test": "bun test tests/unit",
     "test:sanity": "node scripts/test-sanity-zero-cache.js",
     "test:e2e-client": "node scripts/test-e2e-simulated-client.js",
@@ -14,16 +14,13 @@
     "check-sources": "node scripts/check-sources.js"
   },
   "dependencies": {
-    "big-integer": "^1.6.52",
-    "express": "^4.18.2",
+    "express": "4.22.2",
     "impit": "0.14.4",
-    "m3u8-parser": "^7.2.0",
-    "stremio-addon-sdk": "^1.6.10",
-    "undici": "^8.10.0"
+    "m3u8-parser": "7.2.0",
+    "undici": "8.10.2"
   },
   "devDependencies": {
-    "@vercel/ncc": "^0.38.3",
-    "copyfiles": "^2.4.1"
+    "@vercel/ncc": "0.38.4"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -23,7 +23,7 @@
 const BaseProvider = require('./BaseProvider');
 const StreamEntity = require('../domain/StreamEntity');
 const path = require('path');
-const { execFile } = require('child_process');
+const { runProviderScript } = require('./runner');
 
 // 🔒
 // Domain flags: known CF-protected domains that must skip server-side scraping.
@@ -76,11 +76,7 @@ class EmbedIndiaProvider extends BaseProvider {
       const scriptPath = path.join(__dirname, 'run_gasm_india.js');
       const origin = new URL(embedUrl).origin;
 
-      const stdout = await new Promise((resolve) => {
-        execFile('node', [scriptPath, channelId, 'EMPTY', 'EMPTY', origin, referer], { timeout: 15000 }, (err, stdout, stderr) => {
-          resolve(stdout + '\n' + stderr);
-        });
-      });
+      const stdout = await runProviderScript(scriptPath, [channelId, 'EMPTY', 'EMPTY', origin, referer]);
 
       const m = stdout.match(/"file":\s*"(https?:\/\/[^"]+\.m3u8.*?)"/);
       if (m) {

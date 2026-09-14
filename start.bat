@@ -9,7 +9,7 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-call bun install || goto :end
+call bun install --frozen-lockfile --ignore-scripts || goto :end
 call bun run build || goto :end
 call bun run start
 

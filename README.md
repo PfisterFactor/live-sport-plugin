@@ -67,7 +67,7 @@ The addon is now available at `http://localhost:7000` (or `http://YOUR_SERVER_IP
    ```bash
    git clone https://github.com/rajhodedara/live-sport-plugin.git
    cd live-sport-plugin
-   bun install
+   bun install --frozen-lockfile
    bun run build
    bun run start
    ```
@@ -101,7 +101,7 @@ The addon is now available at `http://localhost:7000` (or `http://YOUR_SERVER_IP
 # Clone and build
 git clone https://github.com/rajhodedara/live-sport-plugin.git
 cd live-sport-plugin
-bun install
+bun install --frozen-lockfile
 bun run build
 
 # Run under PM2 via bunx (no global install required)
@@ -131,7 +131,7 @@ bunx pm2 startup
 | Layer | Technologies |
 |---|---|
 | **Runtime & Core** | [Node.js](https://nodejs.org/) (v22+ LTS), [Express.js](https://expressjs.com/) |
-| **Addon Protocol** | [stremio-addon-sdk](https://github.com/Stremio/stremio-addon-sdk) (Stremio v1 Protocol) |
+| **Addon Protocol** | In-house Stremio v1 router (`src/addonRouter.js`), no SDK dependency |
 | **Architecture** | Lazy singleton dependency registry, Domain-Driven Design (DDD) |
 | **High-Performance HTTP & TLS** | [Impit](https://github.com/impit-dev/impit) (Native HTTP client with TLS/browser fingerprint impersonation), [Undici](https://undici.nodejs.org/) |
 | **WASM Decryption Engines** | Native WebAssembly execution (`stream-lock.wasm`, `gasm.wasm`, `lock.wasm`) |
@@ -154,7 +154,7 @@ Before setting up the project locally:
 
 ```bash
 # 1. Install dependencies
-bun install
+bun install --frozen-lockfile
 
 # 2. Start development mode with native watch reload
 bun run dev

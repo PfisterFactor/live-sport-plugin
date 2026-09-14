@@ -2,7 +2,7 @@
  * app.js — Nuvio Live Sports Plugin Express application
  *
  * Builds (but never starts) the Express app that serves:
- *   - /manifest.json          → addon manifest (via SDK getRouter)
+ *   - /manifest.json          → addon manifest, filtered per config segment
  *   - /catalog|meta|stream/*  → match lists, detail, stream URLs
  *   - /watch                  → HTML proxy page for embed streams
  *   - /api/matches, /api/manifest, /api/proxy-embed
@@ -14,13 +14,11 @@
  */
 
 const express = require('express');
-const { getRouter } = require('stremio-addon-sdk');
 const path = require('path');
 const fs = require('fs');
 
-const { builder } = require('./manifest');
-const { handleCatalog, handleMeta } = require('./catalog');
-const { handleStream } = require('./streams');
+const { manifest } = require('./manifest');
+const addonRouter = require('./addonRouter');
 const { getRequestBaseUrl } = require('./config');
 const container = require('./container');
 
@@ -43,12 +41,6 @@ function escapeHtml(value) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-
-// ─── Register Addon Handlers ──────────────────────────────────────────────────
-
-builder.defineCatalogHandler(({ type, id, extra, config }) => handleCatalog(type, id, extra, config));
-builder.defineMetaHandler(({ type, id, config })           => handleMeta(type, id, config));
-builder.defineStreamHandler(({ type, id, config })         => handleStream(type, id, config));
 
 // ─── Build Express App ────────────────────────────────────────────────────────
 
@@ -280,35 +272,9 @@ app.use((req, res, next) => {
   next();
 });
 
-/**
- * Decodes a config URL segment. Accepts URL-encoded JSON or base64url JSON.
- * Returns null when the segment is not a valid config.
- */
-function decodeConfigSegment(configStr) {
-  try {
-    let parsed;
-    if (configStr.startsWith('%7B') || configStr.startsWith('{')) {
-      parsed = JSON.parse(decodeURIComponent(configStr));
-    } else {
-      let base64 = configStr.replace(/-/g, '+').replace(/_/g, '/');
-      while (base64.length % 4) {
-        base64 += '=';
-      }
-      parsed = JSON.parse(Buffer.from(base64, 'base64').toString('utf-8'));
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    return parsed;
-  } catch (e) {
-    return null;
-  }
-}
-app.get('/:config?/manifest.json', (req, res, next) => {
-  const { manifest } = require('./manifest');
-  let parsedConfig = {};
-  if (req.params.config) {
-    parsedConfig = decodeConfigSegment(req.params.config);
-    if (parsedConfig === null) return next();
-  }
+// A segment that is not a config object serves the unconfigured manifest.
+app.get('/:config?/manifest.json', (req, res) => {
+  const parsedConfig = (req.params.config && addonRouter.decodeConfigSegment(req.params.config)) || {};
 
   // Clone manifest catalogs
   const newManifest = JSON.parse(JSON.stringify(manifest));
@@ -340,21 +306,7 @@ app.get('/:config?/manifest.json', (req, res, next) => {
   res.send(newManifest);
 });
 
-// The SDK router JSON.parses the raw config segment. Nuvio installs use a
-// base64url config, so rewrite it to URL-encoded JSON before the SDK sees it.
-app.use((req, res, next) => {
-  const m = req.url.match(/^\/([A-Za-z0-9_-]+)(\/(?:catalog|meta|stream)\/.+)$/);
-  if (m && !m[1].startsWith('%7B')) {
-    const parsed = decodeConfigSegment(m[1]);
-    if (parsed !== null) {
-      req.url = `/${encodeURIComponent(JSON.stringify(parsed))}${m[2]}`;
-    }
-  }
-  next();
-});
-
-// Mount the Stremio addon router
-app.use(getRouter(builder.getInterface()));
+addonRouter.mount(app);
 
 app.get('/watch', (req, res) => {
   const mode     = req.query.mode;

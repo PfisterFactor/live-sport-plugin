@@ -7,6 +7,6 @@ if ! command -v bun &> /dev/null; then
     exit 1
 fi
 
-bun install
+bun install --frozen-lockfile --ignore-scripts
 bun run build
 bun run start

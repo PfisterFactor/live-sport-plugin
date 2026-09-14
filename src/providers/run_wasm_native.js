@@ -100,10 +100,7 @@ global.fetch = async (url, opts) => {
   const urlStr = typeof url === 'string' ? url : (url.url || url.href);
   
   if (urlStr.includes('lock.wasm')) {
-    const wasmPath = fs.existsSync(path.join(__dirname, 'lock.wasm')) 
-      ? path.join(__dirname, 'lock.wasm') 
-      : path.join(process.cwd(), 'lock.wasm');
-    const wasmBuffer = fs.readFileSync(wasmPath);
+    const wasmBuffer = fs.readFileSync(path.join(__dirname, 'lock.wasm'));
     return new Response(wasmBuffer, { status: 200, headers: { 'Content-Type': 'application/wasm' } });
   }
   
@@ -197,10 +194,7 @@ global.fetch = async (url, opts) => {
 
 (async () => {
   try {
-    const lockFilePath = fs.existsSync(path.join(__dirname, 'lock.js'))
-      ? path.join(__dirname, 'lock.js')
-      : path.join(process.cwd(), 'lock.js');
-    const lockPath = require('url').pathToFileURL(lockFilePath).href;
+    const lockPath = require('url').pathToFileURL(path.join(__dirname, 'lock.js')).href;
     const lock = await import(lockPath);
     await lock.default();
     try {

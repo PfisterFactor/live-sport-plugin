@@ -1,5 +1,3 @@
-const { addonBuilder } = require('stremio-addon-sdk');
-
 const manifest = {
   id: 'community.nuvio.live-sports',
   version: '3.0.0',
@@ -58,6 +56,4 @@ const manifest = {
   },
 };
 
-const builder = new addonBuilder(manifest);
-
-module.exports = { builder, manifest };
+module.exports = { manifest };
