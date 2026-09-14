@@ -28,7 +28,7 @@
 
 const http = require('http');
 const path = require('path');
-const express = require('express');
+const { createApp } = require('../src/httpApp');
 const { request } = require('undici');
 const container = require('../src/container');
 const imageService = require('../src/services/ImageService');
@@ -303,7 +303,7 @@ async function runChallengerEndpointsStress() {
 
     // 2C: In-Process Express Route Integration for /api/matches
     console.log('\n👉 Scenario 2C: In-Process Express /api/matches Route Live Invocation...');
-    const testExpressApp = express();
+    const testExpressApp = createApp();
     testExpressApp.get('/api/matches', async (req, res) => {
       try {
         const matches = await container.resolve('matchAggregator').syncMatches();

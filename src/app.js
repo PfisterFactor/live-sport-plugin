@@ -1,7 +1,7 @@
 /**
- * app.js — Nuvio Live Sports Plugin Express application
+ * app.js — Nuvio Live Sports Plugin HTTP application
  *
- * Builds (but never starts) the Express app that serves:
+ * Builds (but never starts) the HTTP app that serves:
  *   - /manifest.json          → addon manifest, filtered per config segment
  *   - /catalog|meta|stream/*  → match lists, detail, stream URLs
  *   - /watch                  → HTML proxy page for embed streams
@@ -13,7 +13,7 @@
  * from any origin without a networkError_manifestLoadError.
  */
 
-const express = require('express');
+const { createApp, serveStatic } = require('./httpApp');
 const path = require('path');
 const fs = require('fs');
 
@@ -42,11 +42,9 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ─── Build Express App ────────────────────────────────────────────────────────
+// ─── Build HTTP App ───────────────────────────────────────────────────────────
 
-const app = express();
-
-app.set('trust proxy', true);
+const app = createApp();
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -61,7 +59,7 @@ app.use((req, res, next) => {
 });
 
 // Serve the web debugger UI and Configuration Page
-app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }));
+app.use(serveStatic(path.join(__dirname, '..', 'public')));
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));

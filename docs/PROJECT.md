@@ -1,7 +1,7 @@
 # Project: Nuvio Live Sports Plugin — Dynamic Host Routing, Thumbnail Repair, & E2E Sanity Testing
 
 ## Architecture
-Nuvio Live Sports Plugin is a Stremio v1 protocol addon built with Node.js/Express. It aggregates live sports fixtures and 24/7 sports TV channels from multiple providers (StreamedPk, StreamFree, WatchFooty, SportyHunter, TimStreams, CdnLive, etc.), transforms them into Stremio catalogs/metadata/streams, and proxies media streams and images safely. Paths in this document are relative to the repository root (one level above `docs/`).
+Nuvio Live Sports Plugin is a Stremio v1 protocol addon built on Node.js `node:http` with an in-house router (`src/httpApp.js`). It aggregates live sports fixtures and 24/7 sports TV channels from multiple providers (StreamedPk, StreamFree, WatchFooty, SportyHunter, TimStreams, CdnLive, etc.), transforms them into Stremio catalogs/metadata/streams, and proxies media streams and images safely. Paths in this document are relative to the repository root (one level above `docs/`).
 
 ### Key Subsystems:
 1. **Host & Routing Layer (`src/config.js`, `src/index.js`)**:
@@ -37,7 +37,7 @@ Nuvio Live Sports Plugin is a Stremio v1 protocol addon built with Node.js/Expre
 
 ## Code Layout & Write Boundaries
 - `src/config.js`: Dynamic IP detection and `getRequestBaseUrl(req)` helper.
-- `src/index.js`: Express configuration, `trust proxy`, universal response rewriter middleware, `/img` and `/img/placeholder` routes.
+- `src/app.js`: HTTP app assembly, universal response rewriter middleware, `/img` and `/img/placeholder` routes.
 - `.env`: Clean configuration without hardcoded local IP.
 - `src/services/ImageService.js`: Image fetching, protocol-relative normalization, LRU cache, SVG fallback generator.
 - `src/catalog.js`: Catalog mapping, thumbnail normalization, team logo fallback hierarchy.

@@ -11,7 +11,7 @@
 
 const assert = require('assert');
 const http = require('http');
-const express = require('express');
+const { createApp } = require('../src/httpApp');
 const container = require('../src/container');
 const { handleCatalog, handleMeta } = require('../src/catalog');
 const { handleStream } = require('../src/streams');
@@ -112,7 +112,7 @@ async function runSanitySuite() {
 
   // 3. Test HTTP /health endpoint
   console.log('\n👉 3. Testing Express HTTP /health and /img/placeholder routes...');
-  const app = express();
+  const app = createApp();
   app.get('/health', (_, res) => {
     res.json({ status: 'ok', service: 'nuvio-live-sports' });
   });

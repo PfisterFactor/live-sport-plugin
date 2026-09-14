@@ -1,6 +1,6 @@
 const assert = require('assert');
 const http = require('http');
-const express = require('express');
+const { createApp } = require('../src/httpApp');
 const container = require('../src/container');
 const { handleCatalog } = require('../src/catalog');
 
@@ -11,7 +11,7 @@ let upstreamRequests = [];
 
 function startMockUpstream() {
   return new Promise((resolve) => {
-    const app = express();
+    const app = createApp();
     app.get('/valid.m3u8', (req, res) => {
       upstreamRequests.push({ path: req.path, time: Date.now() });
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -43,7 +43,7 @@ async function runTests() {
   const { request } = require('undici');
 
   // Spawn local test express app using the actual endpoints from index.js
-  const app = express();
+  const app = createApp();
   
   // Replicate index.js manifest proxy helpers
   const MANIFEST_TTL_MS = 3000;

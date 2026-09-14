@@ -380,8 +380,8 @@ async function runChallengerStressSuite() {
     console.log(`================================================================`);
 
     const { request: undiciRequest } = require('undici');
-    const express = require('express');
-    const proxyTestApp = express();
+    const { createApp } = require('../src/httpApp');
+    const proxyTestApp = createApp();
     
     let sharedImpit;
     function getImpit() {

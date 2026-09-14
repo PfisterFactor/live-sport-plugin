@@ -130,7 +130,7 @@ bunx pm2 startup
 
 | Layer | Technologies |
 |---|---|
-| **Runtime & Core** | [Node.js](https://nodejs.org/) (v22+ LTS), [Express.js](https://expressjs.com/) |
+| **Runtime & Core** | [Node.js](https://nodejs.org/) (v22+ LTS), `node:http` with an in-house router (`src/httpApp.js`) |
 | **Addon Protocol** | In-house Stremio v1 router (`src/addonRouter.js`), no SDK dependency |
 | **Architecture** | Lazy singleton dependency registry, Domain-Driven Design (DDD) |
 | **High-Performance HTTP & TLS** | [Impit](https://github.com/impit-dev/impit) (Native HTTP client with TLS/browser fingerprint impersonation), [Undici](https://undici.nodejs.org/) |
