@@ -2,6 +2,10 @@ const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
 
+/**
+ * Build the hex-encoded protobuf request body from a sportsembed embed URL.
+ * Fields: 1=tier, 2=slug, 3=channel, 4=matchId.
+ */
 function buildProtoHex(embedUrl) {
     // https://sportsembed.su/embed/6028327/club-america-columbus-crew/platinum/1
     const parts = embedUrl.split('/');
@@ -164,4 +168,4 @@ async function extractSportsEmbed(embedUrl) {
     throw new Error('M3U8 string not found in decoded memory.');
 }
 
-module.exports = { extractSportsEmbed };
+module.exports = { extractSportsEmbed, buildProtoHex };

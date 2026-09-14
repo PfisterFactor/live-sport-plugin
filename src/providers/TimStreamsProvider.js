@@ -138,7 +138,7 @@ class TimStreamsProvider extends BaseProvider {
       const decoded = this.decodeObfuscatedScript(html);
       if (!decoded) return null;
 
-      const urlMatch = decoded.match(/https?:\/\/[^\x22\x27<>\s]+\.m3u8/);
+      const urlMatch = decoded.match(/https?:\/\/[^\x22\x27<>\s]+\.m3u8(?:\?[^\x22\x27<>\s]*)?/);
       if (!urlMatch) return null;
 
       const embedDomain = new URL(embedUrl).origin;

@@ -74,7 +74,7 @@ async function resolveSource(src, match) {
 
 // Safe impit+undici helper — works on all platforms (Windows, Linux x64/ARM64, musl).
 // impit is tried first for browser TLS fingerprinting; undici is the automatic fallback.
-const { safeFetch: _safeFetch } = require('./impitClient');
+const impitClient = require('./impitClient');
 
 
 // --- Stream Health Verification ---
@@ -128,8 +128,8 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache) {
       if (origin) reqHeaders['Origin'] = origin;
 
       try {
-        // _safeFetch handles impit -> undici fallback automatically on all platforms
-        const result = await _safeFetch(targetUrl, {
+        // safeFetch handles impit -> undici fallback automatically on all platforms
+        const result = await impitClient.safeFetch(targetUrl, {
           method: 'GET',
           headers: reqHeaders,
           signal: abortController.signal,
@@ -366,5 +366,8 @@ async function handleStream(type, id, config) {
 
 module.exports = {
   handleStream,
-  prewarmMatch
+  prewarmMatch,
+  selectSources,
+  resolveSource,
+  SOURCES
 };

@@ -1,6 +1,6 @@
 const container = require('./container');
 const { getChannelLogo } = require('./services/ChannelLogoService');
-const { prewarmMatch } = require('./streams');
+const streams = require('./streams');
 const { BASE_URL } = require('./config');
 const imageService = require('./services/ImageService');
 
@@ -76,7 +76,6 @@ function normalizeImageUrl(url, defaultHost = 'https://streamfree.top') {
 function mapMatchToMetaPreview(match, config = {}) {
   const isLive = isMatchLive(match);
   const titleStr = match.title || (isLive ? 'Live Match' : 'Upcoming Match');
-  const safeTitle = encodeURIComponent(Array.from(titleStr).slice(0, 30).join(''));
   
   // Dynamic Sport-Specific Posters
   const categoryColors = {
@@ -100,7 +99,7 @@ function mapMatchToMetaPreview(match, config = {}) {
   // Channel logos come from the unified ChannelLogoService (tv-logos CDN + Wikimedia).
 
   // Generate a clean, readable fallback poster using the match title
-  let posterText = match.title;
+  let posterText = titleStr;
   if (match.team1 && match.team2 && match.team1.name && match.team2.name) {
       posterText = `${match.team1.name}\nvs\n${match.team2.name}`;
   } else {
@@ -132,7 +131,7 @@ function mapMatchToMetaPreview(match, config = {}) {
   if (matchPoster) {
     poster = buildImg(matchPoster, posterText, color) || fallbackPoster;
   } else if (channelLogo) {
-    poster = buildImg(channelLogo, match.title, '161616') || fallbackPoster;
+    poster = buildImg(channelLogo, titleStr, '161616') || fallbackPoster;
     logo = channelLogo;
   } else if (matchThumb) {
     const isLogo = match.category === 'networks' || matchThumb.toLowerCase().includes('logo') || matchThumb.toLowerCase().includes('icon');
@@ -146,7 +145,7 @@ function mapMatchToMetaPreview(match, config = {}) {
   }
 
   if (logo) {
-    logo = buildImg(logo, match.title || 'TV', '161616') || logo;
+    logo = buildImg(logo, titleStr, '161616') || logo;
   }
   
   const matchBackground = match.background ? normalizeImageUrl(match.background) : null;
@@ -197,7 +196,7 @@ function mapMatchToMetaPreview(match, config = {}) {
   const metaPreview = {
     id: `nuvio_sport_${match.id}`,
     type: 'tv',
-    name: `${prefix}${match.title}`,
+    name: `${prefix}${titleStr}`,
     genres: [match.category.toUpperCase()],
     poster: poster,
     posterShape: 'landscape',
@@ -340,7 +339,7 @@ async function handleMeta(type, id, config) {
 
   // Prewarm: mint tokens for this match's top sources while the user is still
   // on the detail page, so the eventual click is near-instant. Fire-and-forget.
-  try { prewarmMatch(match, config || {}).catch(() => {}); } catch (_) {}
+  try { streams.prewarmMatch(match, config || {}).catch(() => {}); } catch (_) {}
 
   return { meta: mapMatchToMetaPreview(match, config || {}) };
 }

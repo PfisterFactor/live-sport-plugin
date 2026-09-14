@@ -15,7 +15,7 @@
  * No new dependencies: fetches use undici (already in the dependency tree).
  */
 
-const { request } = require('undici');
+const undici = require('undici');
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
 
@@ -108,7 +108,7 @@ async function getImage(rawUrl) {
     try {
       // AbortSignal caps the TOTAL request (headers + body): a slow-loris upstream
       // that trickles bytes can otherwise hang past headersTimeout/bodyTimeout.
-      const res = await request(url, {
+      const res = await undici.request(url, {
         headers: { 'User-Agent': UA, 'Accept': 'image/*,*/*;q=0.8' },
         headersTimeout: FETCH_TIMEOUT_MS,
         bodyTimeout: FETCH_TIMEOUT_MS,

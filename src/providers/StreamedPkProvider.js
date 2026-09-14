@@ -111,7 +111,7 @@ class StreamedPkProvider extends BaseProvider {
           matches.push(new MatchEntity({
             id: `spk_${item.id}`,
             title: item.title,
-            category: is247Channel && (item.id.includes('channel') || item.id.includes('network') || item.id.includes('tv') || Number(item.date) <= 0) ? (item.category === 'cricket' ? 'cricket' : (item.category === 'tennis' ? 'tennis' : (item.category === 'rugby' ? 'rugby' : this.normalizeCategory(item.category)))) : this.normalizeCategory(item.category),
+            category: is247Channel && (String(item.id).includes('channel') || String(item.id).includes('network') || String(item.id).includes('tv') || Number(item.date) <= 0) ? (item.category === 'cricket' ? 'cricket' : (item.category === 'tennis' ? 'tennis' : (item.category === 'rugby' ? 'rugby' : this.normalizeCategory(item.category)))) : this.normalizeCategory(item.category),
             status: status,
             date: is247Channel ? '' : String(item.date || Date.now()),
             popular: is247Channel ? '1' : (item.popular ? '1' : '0'),

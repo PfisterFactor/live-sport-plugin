@@ -7,6 +7,7 @@
     "start": "node dist/index.js",
     "dev": "node --watch-path=src src/index.js",
     "build": "ncc build src/index.js -o dist --minify && copyfiles -f \"src/providers/*.wasm\" \"src/providers/*.js\" dist",
+    "test": "bun test tests/unit",
     "test:sanity": "node scripts/test-sanity-zero-cache.js",
     "test:e2e-client": "node scripts/test-e2e-simulated-client.js",
     "test:247": "node scripts/test-247-channels.js",

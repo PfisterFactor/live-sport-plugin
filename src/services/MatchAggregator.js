@@ -60,7 +60,7 @@ function _compoundify(t) {
     [/\bdenver\s*nuggets\b|\bnuggets\b/g, 'denvernuggets'],
     [/\bmilwaukee\s*bucks\b|\bbucks\b/g, 'milwaukeebucks'],
   ];
-  let r = t.toLowerCase();
+  let r = t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   for (const [regex, rep] of aliases) r = r.replace(regex, rep);
   return r;
 }
@@ -113,7 +113,8 @@ function _tryExtractTeams(title) {
 
 class MatchAggregator {
   constructor({ streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, cacheService }) {
-    this.providers = [streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider];
+    this.providers = [streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider]
+      .filter(p => p && typeof p.getMatches === 'function');
     this.cacheService = cacheService;
   }
 
@@ -219,6 +220,7 @@ class MatchAggregator {
 
         const existing = finalMatches[idx];
         if (match.sources && Array.isArray(match.sources)) {
+          if (!Array.isArray(existing.sources)) existing.sources = [];
           match.sources.forEach(src => {
             if (!existing.sources.find(s => s.id === src.id && s.source === src.source)) {
               existing.sources.push(src);

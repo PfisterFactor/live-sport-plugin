@@ -57,8 +57,7 @@ class CronService {
       setInterval(async () => {
         try {
           console.log(`[CronService] Pinging external URL to prevent sleep...`);
-          const { request } = require('undici');
-          await request(`${externalUrl}/health`);
+          await require('undici').request(`${externalUrl}/health`);
         } catch (err) {
           console.error('[CronService] Keep-alive ping failed:', err.message);
         }

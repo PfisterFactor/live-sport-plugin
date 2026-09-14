@@ -41,13 +41,27 @@ const _undiciAgent = new Agent({
   keepAliveMaxTimeout: 30000,
 });
 
+/**
+ * Normalizes a Headers instance, entries iterable, or plain object into a
+ * lowercase-keyed plain object so callers see one shape from both paths.
+ */
+function normalizeHeaders(raw) {
+  if (!raw) return {};
+  const out = {};
+  const entries = typeof raw.entries === 'function' ? raw.entries() : Object.entries(raw);
+  for (const [key, value] of entries) {
+    out[String(key).toLowerCase()] = Array.isArray(value) ? value.join(', ') : value;
+  }
+  return out;
+}
+
 // -- Core helper --------------------------------------------------------------
 /**
  * safeFetch - fetches a URL using impit when available, falls back to undici.
  *
  * @param {string} url
  * @param {object} opts   - { method, headers, body, signal, timeoutMs }
- * @returns {{ ok, status, text: () => string, json: () => object }}
+ * @returns {{ ok, status, headers, text: () => string, json: () => object }}
  */
 async function safeFetch(url, opts = {}) {
   const { method = 'GET', headers = {}, body, signal, timeoutMs = 15000 } = opts;
@@ -69,6 +83,7 @@ async function safeFetch(url, opts = {}) {
         return {
           ok: res.status >= 200 && res.status < 300,
           status: res.status,
+          headers: normalizeHeaders(res.headers),
           text: async () => textData,
           json: async () => JSON.parse(textData),
         };
@@ -96,6 +111,7 @@ async function safeFetch(url, opts = {}) {
   return {
     ok: res.statusCode >= 200 && res.statusCode < 300,
     status: res.statusCode,
+    headers: normalizeHeaders(res.headers),
     text: async () => textData,
     json: async () => JSON.parse(textData),
   };

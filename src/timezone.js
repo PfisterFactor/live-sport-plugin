@@ -1,4 +1,48 @@
 /**
+ * Returns a usable IANA timezone name, falling back to UTC when the supplied
+ * value is missing or not recognised by Intl.
+ *
+ * @param {string} timeZone - Candidate IANA timezone name.
+ * @returns {string} A timezone name Intl.DateTimeFormat accepts.
+ */
+function safeTimeZone(timeZone) {
+  if (!timeZone || typeof timeZone !== 'string') return 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return timeZone;
+  } catch (_) {
+    return 'UTC';
+  }
+}
+
+/**
+ * Returns the UTC offset, in milliseconds, that the given timezone was using
+ * at the given instant.
+ *
+ * @param {number} instantMs - UTC epoch milliseconds.
+ * @param {string} timeZone - Valid IANA timezone name.
+ * @returns {number} Offset in milliseconds (positive east of Greenwich).
+ */
+function offsetAt(instantMs, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  }).formatToParts(new Date(instantMs));
+
+  const p = {};
+  parts.forEach(part => { p[part.type] = part.value; });
+
+  let hour = parseInt(p.hour, 10);
+  if (hour === 24) hour = 0; // Intl.DateTimeFormat can return 24 for midnight
+  const hourStr = hour.toString().padStart(2, '0');
+
+  const asUtc = Date.parse(`${p.year}-${p.month}-${p.day}T${hourStr}:${p.minute}:${p.second}Z`);
+  return asUtc - instantMs;
+}
+
+/**
  * Parses a date string and a timezone into a stable UTC UNIX timestamp (milliseconds).
  * 
  * @param {string|number} dateValue - The date string or UNIX timestamp.
@@ -32,51 +76,34 @@ function parseTimezone(dateValue, timeZone = 'UTC') {
     return Number.isFinite(t) && t > 0 ? t : null;
   }
 
+  const tz = safeTimeZone(timeZone);
+
   // Replace spaces with T for proper ISO format compatibility
   let cleanStr = str.replace(' ', 'T');
-  
+
   // If the string is just a time (e.g. "21:30" or "21:30:00"), prepend today's date in target timezone.
-  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(cleanStr)) {
+  const timeOnly = cleanStr.match(/^(\d{1,2}):(\d{2})(:\d{2})?$/);
+  if (timeOnly) {
     const tzDateStr = new Intl.DateTimeFormat('en-US', {
-      timeZone, year: 'numeric', month: '2-digit', day: '2-digit'
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
     }).format(new Date());
     const [mm, dd, yyyy] = tzDateStr.split('/');
-    // Use padStart to ensure time has leading zeros for valid ISO format
-    let timePart = cleanStr;
-    if (timePart.length === 4) timePart = '0' + timePart; // e.g. "9:30" -> "09:30"
+    const timePart = `${timeOnly[1].padStart(2, '0')}:${timeOnly[2]}${timeOnly[3] || ''}`;
     cleanStr = `${yyyy}-${mm}-${dd}T${timePart}`;
   }
-  
+
   // We treat the incoming local time string as if it were UTC.
   // Example: "2026-08-16T16:05" -> "2026-08-16T16:05Z"
-  const localDate = new Date(cleanStr + 'Z');
-  if (isNaN(localDate.getTime())) return null;
+  const wallClockAsUtc = new Date(cleanStr + 'Z').getTime();
+  if (!Number.isFinite(wallClockAsUtc)) return null;
 
-  // Format this time in the target timezone to determine the offset.
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false
-  });
-  
-  const parts = formatter.formatToParts(localDate);
-  const p = {};
-  parts.forEach(part => { p[part.type] = part.value; });
-  
-  let hour = parseInt(p.hour, 10);
-  if (hour === 24) hour = 0; // Intl.DateTimeFormat can return 24 for midnight
-  const hourStr = hour.toString().padStart(2, '0');
-  
-  // Create a UTC date representing what the time actually is in the target timezone
-  const formattedStr = `${p.year}-${p.month}-${p.day}T${hourStr}:${p.minute}:${p.second}Z`;
-  const formattedDate = new Date(formattedStr);
-  
-  // The difference between localDate and formattedDate is the exact timezone offset for that specific moment.
-  const offsetMs = localDate.getTime() - formattedDate.getTime();
-  
-  // Apply the offset to get the true UTC UNIX timestamp
-  const trueUtcTime = localDate.getTime() + offsetMs;
+  // First pass uses the offset in effect at the wall clock read as UTC; the
+  // second pass re-reads the offset at the candidate instant so kickoffs near
+  // a DST transition land on the offset that is actually in force then.
+  let trueUtcTime = wallClockAsUtc - offsetAt(wallClockAsUtc, tz);
+  const refined = wallClockAsUtc - offsetAt(trueUtcTime, tz);
+  if (offsetAt(refined, tz) === offsetAt(trueUtcTime, tz)) trueUtcTime = refined;
+
   return trueUtcTime > 0 ? trueUtcTime : null;
 }
 

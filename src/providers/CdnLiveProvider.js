@@ -73,9 +73,7 @@ class CdnLiveProvider extends BaseProvider {
 
           const matchId = this._idOf(item, title);
           const status = (item.status === 'live' || item.status === 'in') ? 'live' : 'upcoming';
-          const matchTime = item.start
-            ? (allCategories ? new Date(item.start).getTime() : parseTimezone(item.start, 'UTC'))
-            : Date.now();
+          const matchTime = (item.start ? parseTimezone(item.start, 'UTC') : null) ?? Date.now();
 
           // Far-out fixtures never get channels and resolve to nothing.
           // Live-flagged events are always kept (clock-skew tolerant).
@@ -130,9 +128,9 @@ class CdnLiveProvider extends BaseProvider {
 
     let m3u8Url = '';
     for (const v of vars) {
-      const valMatch = html.match(new RegExp(`var\\s+${v}\\s*=\\s*'([^']+)'`));
+      const valMatch = html.match(new RegExp(`var\\s+${v}\\s*=\\s*(?:'([^']+)'|"([^"]+)")`));
       if (!valMatch) continue;
-      let b64 = valMatch[1].replace(/-/g, '+').replace(/_/g, '/');
+      let b64 = (valMatch[1] || valMatch[2]).replace(/-/g, '+').replace(/_/g, '/');
       while (b64.length % 4) b64 += '=';
       try { m3u8Url += Buffer.from(b64, 'base64').toString('utf8'); } catch (_) {}
     }

@@ -3,7 +3,7 @@ const CF_PROXY_POOL = [];
 
 // Safe impit wrapper — falls back to undici when impit native binary is
 // unavailable (ARM64 VPS, Alpine/musl Linux, certain Windows Server builds).
-const { safeFetch: _safeFetch } = require('../impitClient');
+const impitClient = require('../impitClient');
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
 
@@ -12,6 +12,24 @@ function getCfProxyUrl() {
   if (process.env.NODE_ENV === 'test') return null;
   if (CF_PROXY_POOL.length === 0) return null;
   return CF_PROXY_POOL[Math.floor(Math.random() * CF_PROXY_POOL.length)];
+}
+
+/**
+ * Copy caller headers, adding the shared browser User-Agent when absent.
+ * Providers that pass no headers at all would otherwise be fingerprinted
+ * as a bare HTTP client and blocked.
+ */
+function withDefaultUa(headers) {
+  if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+    const clone = new Headers(headers);
+    if (!clone.has('user-agent')) clone.set('User-Agent', DEFAULT_UA);
+    return clone;
+  }
+  const merged = { ...(headers || {}) };
+  if (!Object.keys(merged).some((k) => k.toLowerCase() === 'user-agent')) {
+    merged['User-Agent'] = DEFAULT_UA;
+  }
+  return merged;
 }
 
 class BaseProvider {
@@ -48,7 +66,7 @@ class BaseProvider {
     if (cat.includes('ncaa') || cat.includes('college')) return 'college';
     if (cat.includes('americanfootball') || cat.includes('nfl') || cat.includes('afl') || cat.includes('gridiron')) return 'american_football';
     if (cat.includes('soccer') || cat.includes('football')) return 'football';
-    if (cat.includes('motor') || cat.includes('racing') || cat.includes('cycling') || cat.includes('f1')) return 'motorsport';
+    if (cat.includes('motor') || cat.includes('racing') || cat.includes('cycling') || cat.includes('f1') || cat.includes('formula') || cat.includes('nascar') || cat.includes('indycar')) return 'motorsport';
     if (cat.includes('fight') || cat.includes('mma') || cat.includes('boxing') || cat.includes('wrestling') || cat.includes('knuckle') || cat.includes('ufc')) return 'mma';
     if (cat.includes('basketball') || cat.includes('nba')) return 'basketball';
     if (cat.includes('golf')) return 'golf';
@@ -89,11 +107,12 @@ class BaseProvider {
     }
     
     const { timeoutMs = 15000, signal, ...rest } = options;
-    return await _safeFetch(url, {
+    return await impitClient.safeFetch(url, {
       method: 'GET',
       ...rest,
-      headers: options.headers || {},
+      headers: withDefaultUa(options.headers),
       timeoutMs,
+      signal,
     });
   }
 
