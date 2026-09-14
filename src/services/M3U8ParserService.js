@@ -1,4 +1,4 @@
-const m3u8Parser = require('m3u8-parser');
+const { parsePlaylist } = require('./m3u8');
 
 class M3U8ParserService {
   constructor() {}
@@ -9,11 +9,7 @@ class M3U8ParserService {
   parseManifestText(manifestText) {
     if (!manifestText || !manifestText.includes('#EXT')) return null;
     try {
-      const parser = new m3u8Parser.Parser();
-      parser.push(manifestText);
-      parser.end();
-
-      const playlists = parser.manifest.playlists || [];
+      const playlists = parsePlaylist(manifestText).playlists;
       if (playlists.length === 0) return null;
 
       // Sort by bandwidth descending

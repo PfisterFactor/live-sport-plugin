@@ -10,7 +10,6 @@ if %errorlevel% neq 0 (
 )
 
 call bun install --frozen-lockfile --ignore-scripts || goto :end
-call bun run build || goto :end
 call bun run start
 
 :end

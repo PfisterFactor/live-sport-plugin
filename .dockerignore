@@ -3,9 +3,7 @@
 .gitignore
 .env
 .DS_Store
-dist
 scripts
-!scripts/copy-providers.js
 tests
 docs
 .github

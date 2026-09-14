@@ -8,5 +8,4 @@ if ! command -v bun &> /dev/null; then
 fi
 
 bun install --frozen-lockfile --ignore-scripts
-bun run build
 bun run start

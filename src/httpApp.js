@@ -129,8 +129,6 @@ function decorateResponse(res) {
 
 /**
  * Static file middleware rooted at `root`; falls through when nothing matches.
- * The file path is built by string concatenation on purpose: ncc's asset
- * relocator rewrites path.resolve/join calls here into a broken constant.
  * normalize() collapses any `..` against the root, so the path cannot escape.
  */
 function serveStatic(root) {

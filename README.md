@@ -68,7 +68,6 @@ The addon is now available at `http://localhost:7000` (or `http://YOUR_SERVER_IP
    git clone https://github.com/rajhodedara/live-sport-plugin.git
    cd live-sport-plugin
    bun install --frozen-lockfile
-   bun run build
    bun run start
    ```
 
@@ -102,10 +101,9 @@ The addon is now available at `http://localhost:7000` (or `http://YOUR_SERVER_IP
 git clone https://github.com/rajhodedara/live-sport-plugin.git
 cd live-sport-plugin
 bun install --frozen-lockfile
-bun run build
 
 # Run under PM2 via bunx (no global install required)
-bunx pm2 start dist/index.js --name "nuvio-sports"
+bunx pm2 start src/index.js --name "nuvio-sports"
 bunx pm2 save
 bunx pm2 startup
 ```
@@ -136,8 +134,7 @@ bunx pm2 startup
 | **High-Performance HTTP & TLS** | [Impit](https://github.com/impit-dev/impit) (Native HTTP client with TLS/browser fingerprint impersonation), [Undici](https://undici.nodejs.org/) |
 | **WASM Decryption Engines** | Native WebAssembly execution (`stream-lock.wasm`, `gasm.wasm`, `lock.wasm`) |
 | **Resilience & Fault Tolerance** | In-process circuit breakers, In-Flight Request Coalescing, Negative Cache Maps |
-| **Streaming & Playlists** | [m3u8-parser](https://github.com/videojs/m3u8-parser), Dynamic M3U8 segment rewriter |
-| **Production Bundler** | [@vercel/ncc](https://github.com/vercel/ncc) (Single CJS distribution with native WASM asset copying) |
+| **Streaming & Playlists** | In-house HLS attribute parser (`src/services/m3u8.js`), Dynamic M3U8 segment rewriter |
 
 ---
 
@@ -159,10 +156,7 @@ bun install --frozen-lockfile
 # 2. Start development mode with native watch reload
 bun run dev
 
-# 3. Build for production (bundles with @vercel/ncc and copies WASM runtimes)
-bun run build
-
-# 4. Launch the compiled production server
+# 3. Launch the production server
 bun run start
 ```
 

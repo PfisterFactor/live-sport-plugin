@@ -9,6 +9,7 @@
  */
 
 const impitClient = require('../impitClient');
+const { parsePlaylist } = require('../services/m3u8');
 
 const MANIFEST_TTL_MS = 3000;
 const MANIFEST_CACHE_MAX = 100;
@@ -163,18 +164,8 @@ function mount(app) {
             throw new Error('Upstream returned non-m3u8 body');
           }
 
-          let dynamicTtl = MANIFEST_TTL_MS;
-          try {
-            const m3u8Parser = require('m3u8-parser');
-            const parser = new m3u8Parser.Parser();
-            parser.push(out);
-            parser.end();
-            if (parser.manifest.targetDuration) {
-              dynamicTtl = (parser.manifest.targetDuration * 1000) / 2;
-            }
-          } catch (e) {
-            // Fallback to default TTL on parse error
-          }
+          const { targetDuration } = parsePlaylist(out);
+          const dynamicTtl = targetDuration ? (targetDuration * 1000) / 2 : MANIFEST_TTL_MS;
 
           const isLive = !out.includes('#EXT-X-ENDLIST');
           let injectedStart = out.includes('#EXT-X-START');

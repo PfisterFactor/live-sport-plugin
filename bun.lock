@@ -6,25 +6,11 @@
       "name": "nuvio-live-sports-plugin",
       "dependencies": {
         "impit": "0.14.4",
-        "m3u8-parser": "7.2.0",
         "undici": "8.10.2",
-      },
-      "devDependencies": {
-        "@vercel/ncc": "0.38.4",
       },
     },
   },
   "packages": {
-    "@babel/runtime": ["@babel/runtime@7.29.7", "", {}, "sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw=="],
-
-    "@vercel/ncc": ["@vercel/ncc@0.38.4", "", { "bin": { "ncc": "dist/ncc/cli.js" } }, "sha512-8LwjnlP39s08C08J5NstzriPvW1SP8Zfpp1BvC2sI35kPeZnHfxVkCwu4/+Wodgnd60UtT1n8K8zw+Mp7J9JmQ=="],
-
-    "@videojs/vhs-utils": ["@videojs/vhs-utils@4.1.2", "", { "dependencies": { "@babel/runtime": "^7.12.5", "global": "^4.4.0" } }, "sha512-1Dsv5dtWOq0LP1G37O46FQFA2tKAZON5UMe6dFPxT7JvPhEx8QIXcFQxan8+hHI3fX6aomFRFrUBJNgRYQDSXA=="],
-
-    "dom-walk": ["dom-walk@0.1.2", "", {}, "sha512-6QvTW9mrGeIegrFXdtQi9pk7O/nSK6lSdXW2eqUspN5LWD7UTji2Fqw5V2YLjBpHEoU9Xl/eUWNpDeZvoyOv2w=="],
-
-    "global": ["global@4.4.0", "", { "dependencies": { "min-document": "^2.19.0", "process": "^0.11.10" } }, "sha512-wv/LAoHdRE3BeTGz53FAamhGlPLhlssK45usmGFThIi4XqnBmjKQ16u+RNbP7WvigRZDxUsM0J3gcQ5yicaL0w=="],
-
     "impit": ["impit@0.14.4", "", { "optionalDependencies": { "impit-darwin-arm64": "0.14.4", "impit-darwin-x64": "0.14.4", "impit-linux-arm64-gnu": "0.14.4", "impit-linux-arm64-musl": "0.14.4", "impit-linux-x64-gnu": "0.14.4", "impit-linux-x64-musl": "0.14.4", "impit-win32-arm64-msvc": "0.14.4", "impit-win32-x64-msvc": "0.14.4" } }, "sha512-XXAafVQpWIYIchSxT6UufZgVNLewKVg9BJSwQYom7b1VWt/l0m+GPMhc4agK9O7QlAnEiFm1QQcX2RpsmLV6gQ=="],
 
     "impit-darwin-arm64": ["impit-darwin-arm64@0.14.4", "", { "os": "darwin", "cpu": "arm64" }, "sha512-i9fkPXXCB/1qBTGIlS26Z2krmE0wk/1UUlDUFeE1bMtihoUIe8TbeslSnx6pgaSY5ai9H0seUAgS9D4i66Kscg=="],
@@ -42,12 +28,6 @@
     "impit-win32-arm64-msvc": ["impit-win32-arm64-msvc@0.14.4", "", { "os": "win32", "cpu": "arm64" }, "sha512-Nga0z+Hmp/HmxEKX0jv1wy2vaT4J44nE6+Z+CNZvvyVWiodWCG9+FvVn4McivgXix7UerspeyPvc174QBHwXEw=="],
 
     "impit-win32-x64-msvc": ["impit-win32-x64-msvc@0.14.4", "", { "os": "win32", "cpu": "x64" }, "sha512-v15fn/kcjLEzALB4z+VWTeG1UrtqZQq9n2HNsRUfUgfcgzM1i+KKtKP2RCJ1Fg1YeojQ7B6XGhRtpVVTjh8u+A=="],
-
-    "m3u8-parser": ["m3u8-parser@7.2.0", "", { "dependencies": { "@babel/runtime": "^7.12.5", "@videojs/vhs-utils": "^4.1.1", "global": "^4.4.0" } }, "sha512-CRatFqpjVtMiMaKXxNvuI3I++vUumIXVVT/JpCpdU/FynV/ceVw1qpPyyBNindL+JlPMSesx+WX1QJaZEJSaMQ=="],
-
-    "min-document": ["min-document@2.19.2", "", { "dependencies": { "dom-walk": "^0.1.0" } }, "sha512-8S5I8db/uZN8r9HSLFVWPdJCvYOejMcEC82VIzNUc6Zkklf/d1gg2psfE79/vyhWOj4+J8MtwmoOz3TmvaGu5A=="],
-
-    "process": ["process@0.11.10", "", {}, "sha512-cdGef/drWFoydD1JsMzuFf8100nZl+GT+yacc2bEced5f9Rjk4z+WtFUTBu9PhOi9j/jfmBPu0mMEY4wIdAF8A=="],
 
     "undici": ["undici@8.10.2", "", {}, "sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ=="],
   }

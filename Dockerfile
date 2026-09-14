@@ -1,15 +1,8 @@
-FROM oven/bun:1@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS build
+FROM oven/bun:1@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS deps
 
 WORKDIR /app
 
 COPY package.json bun.lock bunfig.toml ./
-RUN bun install --frozen-lockfile --ignore-scripts
-
-COPY src ./src
-COPY public ./public
-COPY scripts/copy-providers.js ./scripts/copy-providers.js
-
-RUN bun run build
 RUN bun install --frozen-lockfile --ignore-scripts --production
 
 # Runtime stays on node: impit ships a Node-ABI native addon and the
@@ -18,10 +11,10 @@ FROM node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95ea
 
 WORKDIR /app
 
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/dist ./dist
-COPY --from=build --chown=node:node /app/public ./public
-COPY --from=build --chown=node:node /app/package.json ./package.json
+COPY --from=deps --chown=node:node /app/node_modules ./node_modules
+COPY --chown=node:node package.json ./package.json
+COPY --chown=node:node src ./src
+COPY --chown=node:node public ./public
 
 ENV PORT=7000
 ENV NODE_ENV=production
@@ -29,4 +22,4 @@ EXPOSE 7000
 
 USER node
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "src/index.js"]
