@@ -107,12 +107,22 @@ describe('safeFetch undici fallback', () => {
     expect(await res.json()).toEqual({ method: 'POST', body: 'hello-body', ct: 'text/plain' });
   }, 15000);
 
-  it('abandons a hung impit call once timeoutMs elapses and still answers', async () => {
+  it('abandons a hung impit call inside the deadline and still answers from undici', async () => {
     impitSpy = spyOn(impit(), 'fetch').mockImplementation(() => new Promise(() => {}));
     const started = Date.now();
-    const res = await impitClient.safeFetch(`${echoUrl}/echo`, { timeoutMs: 50 });
+    const res = await impitClient.safeFetch(`${echoUrl}/echo`, { timeoutMs: 1000 });
+    const elapsed = Date.now() - started;
     expect(res.status).toBe(200);
-    expect(Date.now() - started).toBeLessThan(10000);
-    expect(impitSpy).toHaveBeenCalledTimes(3);
+    expect(elapsed).toBeLessThan(1500);
+    expect(impitSpy).toHaveBeenCalledTimes(1);
+  }, 15000);
+
+  it('does not spend more than timeoutMs in total when every path is dead', async () => {
+    impitSpy = spyOn(impit(), 'fetch').mockImplementation(() => new Promise(() => {}));
+    const started = Date.now();
+    await expect(
+      impitClient.safeFetch('http://127.0.0.1:1/echo', { timeoutMs: 1000 })
+    ).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(1500);
   }, 15000);
 });

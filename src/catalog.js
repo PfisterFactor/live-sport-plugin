@@ -73,6 +73,26 @@ function normalizeImageUrl(url, defaultHost = 'https://streamfree.top') {
   return `${defaultHost}/${u}`;
 }
 
+// Building an Intl.DateTimeFormat costs more than formatting with one, and a
+// catalog renders hundreds of kickoff times that share a handful of timezones.
+const timeFormatters = new Map();
+
+/** 24-hour kickoff formatter for `timeZone`, falling back to UTC when invalid. */
+function kickoffFormatter(timeZone) {
+  const key = timeZone || '';
+  let formatter = timeFormatters.get(key);
+  if (formatter) return formatter;
+  const options = { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+  if (timeZone) options.timeZone = timeZone;
+  try {
+    formatter = new Intl.DateTimeFormat('en-US', options);
+  } catch (e) {
+    formatter = new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' });
+  }
+  timeFormatters.set(key, formatter);
+  return formatter;
+}
+
 function mapMatchToMetaPreview(match, config = {}) {
   const isLive = isMatchLive(match);
   const titleStr = match.title || (isLive ? 'Live Match' : 'Upcoming Match');
@@ -158,13 +178,9 @@ function mapMatchToMetaPreview(match, config = {}) {
   if (match.date && !isNaN(parseInt(match.date)) && parseInt(match.date) > 0) {
      const dateObj = new Date(parseInt(match.date));
      releasedIso = dateObj.toISOString();
-     const options = { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }; // 24-hour format (00-23), never AM/PM
-     
-     if (config && config.timezone) {
-       options.timeZone = config.timezone;
-     }
-     
-     timeString = dateObj.toLocaleTimeString('en-US', options) + (options.timeZone ? ` (${options.timeZone})` : '');
+     const timeZone = config && config.timezone ? config.timezone : null;
+
+     timeString = kickoffFormatter(timeZone).format(dateObj) + (timeZone ? ` (${timeZone})` : '');
      
      const now = Date.now();
      const diff = dateObj.getTime() - now;
@@ -216,6 +232,14 @@ function mapMatchToMetaPreview(match, config = {}) {
 
   return metaPreview;
 }
+
+// Stremio's catalog page size. Clients request further pages with `skip`.
+const PAGE_SIZE = 100;
+
+// Clients may hold a catalog page this long. The list itself is refreshed on a
+// background window (CronService.REVALIDATE_AFTER_MS), so a minute of staleness
+// never exceeds what the server would have served anyway.
+const CATALOG_MAX_AGE = 60;
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -306,18 +330,26 @@ async function handleCatalog(type, id, extra, config) {
     return 0;
   });
 
-  let metas = filteredMatches.map(m => mapMatchToMetaPreview(m, conf));
+  // Stremio pages catalogs with `skip`; without the slice every page re-sends
+  // the entire list. Search has to run on rendered metas, so it maps first.
+  const skip = Math.max(0, parseInt(extra && extra.skip, 10) || 0);
+  let metas;
 
   if (extra && extra.search) {
     const q = extra.search.toLowerCase();
-    metas = metas.filter(m => 
-      m.name.toLowerCase().includes(q) || 
-      (m.description && m.description.toLowerCase().includes(q)) ||
-      (m.cast && m.cast.some(c => c.toLowerCase().includes(q)))
-    );
+    metas = filteredMatches
+      .map(m => mapMatchToMetaPreview(m, conf))
+      .filter(m =>
+        m.name.toLowerCase().includes(q) ||
+        (m.description && m.description.toLowerCase().includes(q)) ||
+        (m.cast && m.cast.some(c => c.toLowerCase().includes(q)))
+      )
+      .slice(skip, skip + PAGE_SIZE);
+  } else {
+    metas = filteredMatches.slice(skip, skip + PAGE_SIZE).map(m => mapMatchToMetaPreview(m, conf));
   }
 
-  return { metas };
+  return { metas, cacheMaxAge: CATALOG_MAX_AGE, staleRevalidate: 300, staleError: 600 };
 }
 
 async function handleMeta(type, id, config) {
@@ -341,7 +373,7 @@ async function handleMeta(type, id, config) {
   // on the detail page, so the eventual click is near-instant. Fire-and-forget.
   try { streams.prewarmMatch(match, config || {}).catch(() => {}); } catch (_) {}
 
-  return { meta: mapMatchToMetaPreview(match, config || {}) };
+  return { meta: mapMatchToMetaPreview(match, config || {}), cacheMaxAge: CATALOG_MAX_AGE, staleRevalidate: 300, staleError: 600 };
 }
 
 module.exports = {

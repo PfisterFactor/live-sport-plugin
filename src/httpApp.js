@@ -130,6 +130,9 @@ function decorateResponse(res) {
 /**
  * Static file middleware rooted at `root`; falls through when nothing matches.
  * normalize() collapses any `..` against the root, so the path cannot escape.
+ *
+ * Responses are revalidated rather than cached blind: the configure page and
+ * artwork change on deploy, and a 304 costs one round trip instead of the body.
  */
 function serveStatic(root) {
   return (req, res, next) => {
@@ -143,6 +146,22 @@ function serveStatic(root) {
     const file = root + path.normalize(`/${pathname}`);
     fs.stat(file, (err, stat) => {
       if (err || !stat.isFile()) return next();
+      const etag = `W/"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
+      const lastModified = stat.mtime.toUTCString();
+      res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+      res.setHeader('ETag', etag);
+      res.setHeader('Last-Modified', lastModified);
+
+      const noneMatch = req.headers['if-none-match'];
+      const modifiedSince = req.headers['if-modified-since'];
+      const fresh = noneMatch
+        ? noneMatch.split(',').some((t) => t.trim() === etag)
+        : modifiedSince && Date.parse(modifiedSince) >= Math.floor(stat.mtimeMs / 1000) * 1000;
+      if (fresh) {
+        res.statusCode = 304;
+        return res.end();
+      }
+
       res.setHeader('Content-Type', mimeFor(file));
       res.setHeader('Content-Length', stat.size);
       if (req.method === 'HEAD') return res.end();

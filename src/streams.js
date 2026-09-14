@@ -208,6 +208,29 @@ async function prewarmMatch(match, config, topN = 3) {
   }
 }
 
+// Response budget for a stream request. At the soft deadline we answer with
+// whatever resolved, provided there is at least one stream; otherwise we keep
+// waiting to the hard deadline rather than hand the player an empty list.
+function streamDeadlines() {
+  return {
+    soft: parseInt(process.env.STREAM_SOFT_DEADLINE_MS, 10) || 4500,
+    hard: parseInt(process.env.STREAM_HARD_DEADLINE_MS, 10) || 12000,
+  };
+}
+
+/** Resolves when every task settles, or at a deadline `hasResult()` permits. */
+async function settleWithin(tasks, hasResult) {
+  if (tasks.length === 0) return;
+  const { soft, hard } = streamDeadlines();
+  let finished = false;
+  const all = Promise.all(tasks).then(() => { finished = true; });
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref());
+
+  await Promise.race([all, sleep(soft)]);
+  if (finished || hasResult()) return;
+  await Promise.race([all, sleep(Math.max(hard - soft, 0))]);
+}
+
 
 async function handleStream(type, id, config) {
   if (type !== 'tv' || !id.startsWith('nuvio_sport_')) {
@@ -231,46 +254,45 @@ async function handleStream(type, id, config) {
 
   const resolveCache = container.resolve('streamResolveCache');
 
-  const resolvePromises = activeSources.map(async (src) => {
+  // Sources that miss the deadline keep running into the resolve cache, so the
+  // next request for this match serves them from a warm entry.
+  const collected = [];
+  const tasks = activeSources.map((src) => {
     const key = `${src.source}:${matchId}:${src.id}`;
-    const minted = await resolveCache.getOrCreate(key, () => mintVerifiedSources(src, match, key));
-    return minted.map((s) => ({ ...s, _cacheKey: key }));
+    return resolveCache.getOrCreate(key, () => mintVerifiedSources(src, match, key))
+      .then((minted) => {
+        for (const s of minted) collected.push({ ...s, _cacheKey: key });
+      })
+      .catch((e) => console.warn(`[streams.js] Resolve failed for ${key}:`, e.message));
   });
-
-  const results = await Promise.allSettled(resolvePromises);
-  for (const result of results) {
-    if (result.status === 'fulfilled' && Array.isArray(result.value)) {
-      streams.push(...result.value);
-    }
-  }
 
   // --- Inject relevant 24/7 channels based on category ---
   const isStreamFreeEnabled = !config || !config.sources || config.sources === 'none' || config.sources.split(',').includes('streamfree');
   if (match.category === 'cricket' && isStreamFreeEnabled) {
-    try {
-      const extraChannels = [
-        { id: 'willow', title: 'Willow TV' },
-        { id: 'skycricket', title: 'Sky Sports Cricket' }
-      ];
-      
-      const warmed = await Promise.all(extraChannels.map(async (channel) => {
-        const key = `streamfree:__channel__:${channel.id}`;
-        const resolved = await resolveCache.getOrCreate(key, () => mintVerifiedSources(
+    const extraChannels = [
+      { id: 'willow', title: 'Willow TV' },
+      { id: 'skycricket', title: 'Sky Sports Cricket' }
+    ];
+    for (const channel of extraChannels) {
+      const key = `streamfree:__channel__:${channel.id}`;
+      tasks.push(
+        resolveCache.getOrCreate(key, () => mintVerifiedSources(
           { source: 'streamfree', id: channel.id, original_category: 'cricket' },
           { category: 'cricket', title: channel.title },
           key
-        ));
-        return resolved.map((s) => ({ ...s, _cacheKey: key }));
-      }));
-      warmed.flat().forEach((s) => {
-        s.score = streamScorer.calculateScore(s, 'streamfree');
-        s._source = 'streamfree';
-        streams.push(s);
-      });
-    } catch (e) {
-      console.warn('[streams.js] Error injecting 24/7 cricket channels:', e.message);
+        ))
+          .then((resolved) => {
+            for (const s of resolved) {
+              collected.push({ ...s, _cacheKey: key, _source: 'streamfree', score: streamScorer.calculateScore(s, 'streamfree') });
+            }
+          })
+          .catch((e) => console.warn('[streams.js] Error injecting 24/7 cricket channels:', e.message))
+      );
     }
   }
+
+  await settleWithin(tasks, () => collected.length > 0);
+  streams.push(...collected);
 
   // Standardize Stream Labels
   const sportIcons = {
@@ -356,6 +378,10 @@ async function handleStream(type, id, config) {
 
   // Verification now happens once per mint (mintVerifiedSources), not per request.
   // Adaptive per-source TTLs keep tokens fresh, so clients may hold the list 30s.
+  // An empty list may just mean a source missed the deadline and is still
+  // minting in the background, so it must not be cached.
+  if (streams.length === 0) return { streams, cacheMaxAge: 0 };
+
   return {
     streams,
     cacheMaxAge: 30,

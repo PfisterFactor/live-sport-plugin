@@ -111,6 +111,26 @@ function _tryExtractTeams(title) {
 
 // ────────────────────────────────────────────────────────────────────────────
 
+// Wall budget for one provider's getMatches() during a sync. Providers swallow
+// their own errors, so a dead upstream shows up as a hang, not a rejection:
+// without this the whole sync waits for the slowest failing origin.
+const PROVIDER_SYNC_TIMEOUT_MS = parseInt(process.env.PROVIDER_SYNC_TIMEOUT_MS, 10) || 8000;
+
+/**
+ * Resolves the provider's matches, or `[]` once the budget elapses. The
+ * provider promise is left running; it only loses the race.
+ */
+function withSyncDeadline(provider) {
+  let timer;
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(`[MatchAggregator] ${provider.name || 'provider'} exceeded ${PROVIDER_SYNC_TIMEOUT_MS}ms, skipping this sync.`);
+      resolve([]);
+    }, PROVIDER_SYNC_TIMEOUT_MS);
+  });
+  return Promise.race([provider.getMatches(), deadline]).finally(() => clearTimeout(timer));
+}
+
 class MatchAggregator {
   constructor({ streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, cacheService }) {
     this.providers = [streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider]
@@ -257,7 +277,7 @@ class MatchAggregator {
       // Memory-safe sequential fetching (Alwaysdata)
       for (const p of this.providers) {
         try {
-          const providerMatches = await p.getMatches();
+          const providerMatches = await withSyncDeadline(p);
           if (Array.isArray(providerMatches) && providerMatches.length > 0) anyProviderSucceeded = true;
           processProviderMatches(providerMatches);
         } catch (err) {
@@ -266,7 +286,7 @@ class MatchAggregator {
       }
     } else {
       // Fast parallel fetching (Render / Local)
-      const results = await Promise.allSettled(this.providers.map(p => p.getMatches()));
+      const results = await Promise.allSettled(this.providers.map(p => withSyncDeadline(p)));
       results.forEach((promiseResult, index) => {
         if (promiseResult.status === 'fulfilled') {
           if (Array.isArray(promiseResult.value) && promiseResult.value.length > 0) anyProviderSucceeded = true;

@@ -37,6 +37,8 @@ beforeEach(() => {
 afterEach(() => {
   resolveSpy.mockRestore();
   safeFetchSpy.mockRestore();
+  delete process.env.STREAM_SOFT_DEADLINE_MS;
+  delete process.env.STREAM_HARD_DEADLINE_MS;
 });
 
 describe('selectSources', () => {
@@ -159,6 +161,38 @@ describe('handleStream', () => {
     expect(streams[0]._source).toBe('cdnlive');
   });
 
+  it('answers at the soft deadline with the sources that resolved in time', async () => {
+    process.env.STREAM_SOFT_DEADLINE_MS = '60';
+    process.env.STREAM_HARD_DEADLINE_MS = '5000';
+    fakes.cacheService = {
+      getMatches: () => [matchWith({
+        sources: [{ source: 'watchfooty', id: 'w-1' }, { source: 'cdnlive', id: 'c-1' }],
+      })],
+    };
+    fakes.watchFootyProvider = {
+      resolveStream: () => new Promise((resolve) => setTimeout(() => resolve([{ url: 'https://wf/slow.m3u8' }]), 3000)),
+    };
+    fakes.cdnLiveProvider = { resolveStream: async () => [{ url: 'https://cdn/a.m3u8' }] };
+
+    const started = Date.now();
+    const { streams } = await handleStream('tv', 'nuvio_sport_m1');
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(streams.map((s) => s._source)).toEqual(['cdnlive']);
+  });
+
+  it('waits past the soft deadline rather than returning an empty list', async () => {
+    process.env.STREAM_SOFT_DEADLINE_MS = '40';
+    process.env.STREAM_HARD_DEADLINE_MS = '5000';
+    fakes.cacheService = { getMatches: () => [matchWith()] };
+    fakes.watchFootyProvider = {
+      resolveStream: () => new Promise((resolve) => setTimeout(() => resolve([{ url: 'https://wf/late.m3u8' }]), 300)),
+    };
+
+    const { streams } = await handleStream('tv', 'nuvio_sport_m1');
+    expect(streams).toHaveLength(1);
+    expect(streams[0]._source).toBe('watchfooty');
+  });
+
   it('drops streams whose health check fails and keeps web player links', async () => {
     fakes.cacheService = {
       getMatches: () => [matchWith({
@@ -272,10 +306,19 @@ describe('handleStream', () => {
     expect(optedOut.streams).toEqual([]);
   });
 
-  it('advertises a short client cache window', async () => {
+  it('advertises a short client cache window for a populated list', async () => {
+    fakes.cacheService = { getMatches: () => [matchWith()] };
+    fakes.watchFootyProvider = { resolveStream: async () => [{ url: 'https://wf/a.m3u8' }] };
+    const out = await handleStream('tv', 'nuvio_sport_m1');
+    expect(out.streams).toHaveLength(1);
+    expect(out).toMatchObject({ cacheMaxAge: 30, staleRevalidate: 30, staleError: 60 });
+  });
+
+  it('never lets a client cache an empty stream list', async () => {
     fakes.cacheService = { getMatches: () => [matchWith()] };
     fakes.watchFootyProvider = { resolveStream: async () => [] };
     const out = await handleStream('tv', 'nuvio_sport_m1');
-    expect(out).toMatchObject({ cacheMaxAge: 30, staleRevalidate: 30, staleError: 60 });
+    expect(out.streams).toEqual([]);
+    expect(out.cacheMaxAge).toBe(0);
   });
 });

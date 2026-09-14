@@ -56,8 +56,16 @@ function normalizeHeaders(raw) {
 }
 
 // -- Core helper --------------------------------------------------------------
+
+// Share of the deadline the impit path may spend across its retries. The rest
+// is reserved for the undici fallback, so a hung impit cannot starve it.
+const IMPIT_BUDGET_RATIO = 0.6;
+
 /**
  * safeFetch - fetches a URL using impit when available, falls back to undici.
+ *
+ * `timeoutMs` is the budget for the whole call: impit retries, backoff, and the
+ * undici fallback all draw from it.
  *
  * @param {string} url
  * @param {object} opts   - { method, headers, body, signal, timeoutMs }
@@ -66,18 +74,23 @@ function normalizeHeaders(raw) {
 async function safeFetch(url, opts = {}) {
   const { method = 'GET', headers = {}, body, signal, timeoutMs = 15000 } = opts;
   const impit = getImpit();
+  const deadline = Date.now() + timeoutMs;
+  const remaining = () => deadline - Date.now();
 
   // -- Path A: impit ---------------------------------------------------------
-    // -- Path A: impit ---------------------------------------------------------
   if (impit) {
+    const impitDeadline = Date.now() + timeoutMs * IMPIT_BUDGET_RATIO;
     let lastErr = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
+      const budget = impitDeadline - Date.now();
+      if (budget <= 0) break;
+      let timer;
       try {
         const res = await Promise.race([
           impit.fetch(url, { method, headers, body }),
-          new Promise((_, rej) =>
-            setTimeout(() => rej(new Error(`impit timeout ${timeoutMs}ms`)), timeoutMs)
-          ),
+          new Promise((_, rej) => {
+            timer = setTimeout(() => rej(new Error(`impit timeout ${Math.round(budget)}ms`)), budget);
+          }),
         ]);
         const textData = await res.text();
         return {
@@ -89,22 +102,26 @@ async function safeFetch(url, opts = {}) {
         };
       } catch (impitErr) {
         lastErr = impitErr;
-        if (attempt < 3) {
-           await new Promise(r => setTimeout(r, 800 * attempt));
-        }
+        const backoff = Math.min(800 * attempt, impitDeadline - Date.now());
+        if (attempt < 3 && backoff > 0) await new Promise(r => setTimeout(r, backoff));
+      } finally {
+        clearTimeout(timer);
       }
     }
-    console.warn(`[impitClient] impit fetch failed after 3 retries (${lastErr.message}), falling back to undici for: ${url}`);
+    console.warn(`[impitClient] impit fetch failed (${lastErr ? lastErr.message : 'budget exhausted'}), falling back to undici for: ${url}`);
   }
 
   // -- Path B: undici --------------------------------------------------------
+  const budget = remaining();
+  if (budget <= 0) throw new Error(`safeFetch timeout ${timeoutMs}ms`);
+  const deadlineSignal = AbortSignal.timeout(budget);
   const res = await undiciRequest(url, {
     method,
     headers,
     body,
-    signal,
-    headersTimeout: timeoutMs,
-    bodyTimeout: timeoutMs,
+    signal: signal ? AbortSignal.any([signal, deadlineSignal]) : deadlineSignal,
+    headersTimeout: budget,
+    bodyTimeout: budget,
     dispatcher: _undiciAgent,
   });
   const textData = await res.body.text();

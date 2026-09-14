@@ -29,4 +29,26 @@ describe('serveStatic', () => {
       expect(await res.text()).not.toContain('"name"');
     }
   });
+
+  it('answers a conditional request with 304 and no body', async () => {
+    const first = await fetch(`${base}/configure.html`);
+    const etag = first.headers.get('etag');
+    expect(etag).toBeTruthy();
+    expect(first.headers.get('cache-control')).toContain('must-revalidate');
+
+    const second = await fetch(`${base}/configure.html`, { headers: { 'If-None-Match': etag } });
+    expect(second.status).toBe(304);
+    expect(await second.text()).toBe('');
+
+    const byDate = await fetch(`${base}/configure.html`, {
+      headers: { 'If-Modified-Since': first.headers.get('last-modified') },
+    });
+    expect(byDate.status).toBe(304);
+  });
+
+  it('serves the body again when the validator does not match', async () => {
+    const res = await fetch(`${base}/configure.html`, { headers: { 'If-None-Match': 'W/"stale"' } });
+    expect(res.status).toBe(200);
+    expect((await res.text()).length).toBeGreaterThan(0);
+  });
 });

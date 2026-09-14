@@ -34,10 +34,13 @@ describe('manifest', () => {
     ]);
   });
 
-  it('declares every catalog as a searchable tv catalog', () => {
+  it('declares every catalog as a searchable, pageable tv catalog', () => {
     for (const c of manifest.catalogs) {
       expect(c.type).toBe('tv');
-      expect(c.extra).toEqual([{ name: 'search', isRequired: false }]);
+      expect(c.extra).toEqual([
+        { name: 'search', isRequired: false },
+        { name: 'skip', isRequired: false },
+      ]);
       expect(typeof c.name).toBe('string');
       expect(c.name.length).toBeGreaterThan(0);
     }

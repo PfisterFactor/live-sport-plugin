@@ -273,6 +273,46 @@ describe('handleCatalog ordering', () => {
   });
 });
 
+describe('handleCatalog paging', () => {
+  const many = (n) => Array.from({ length: n }, (_, i) =>
+    match({ id: `m${i}`, title: `Team${i} vs Rival${i}`, date: String(NOW + (i + 1) * HOUR) }));
+
+  it('returns one page per request and advances with skip', async () => {
+    matches = many(250);
+    const first = await handleCatalog('tv', 'nuvio_sports_upcoming', {}, {});
+    const second = await handleCatalog('tv', 'nuvio_sports_upcoming', { skip: '100' }, {});
+    const last = await handleCatalog('tv', 'nuvio_sports_upcoming', { skip: '200' }, {});
+
+    expect(first.metas).toHaveLength(100);
+    expect(second.metas).toHaveLength(100);
+    expect(last.metas).toHaveLength(50);
+    expect(new Set([...names(first), ...names(second), ...names(last)]).size).toBe(250);
+    expect(names(second)[0]).not.toBe(names(first)[0]);
+  });
+
+  it('pages the filtered result set, not the raw list, when searching', async () => {
+    matches = [...many(120), match({ id: 'x', title: 'Zebra vs Yak', date: String(NOW + 500 * HOUR) })];
+    const res = await handleCatalog('tv', 'nuvio_sports_upcoming', { search: 'zebra' }, {});
+    expect(names(res)).toEqual(['⏱️ Zebra vs Yak']);
+  });
+
+  it('treats a missing or junk skip as the first page', async () => {
+    matches = many(150);
+    for (const extra of [{}, { skip: '' }, { skip: 'abc' }, { skip: '-5' }]) {
+      const res = await handleCatalog('tv', 'nuvio_sports_upcoming', extra, {});
+      expect(res.metas).toHaveLength(100);
+      expect(names(res)[0]).toBe('⏱️ Team0 vs Rival0');
+    }
+  });
+
+  it('lets clients cache a page without outliving the background refresh', async () => {
+    matches = many(1);
+    const res = await handleCatalog('tv', 'nuvio_sports_upcoming', {}, {});
+    expect(res.cacheMaxAge).toBe(60);
+    expect(res.staleRevalidate).toBe(300);
+  });
+});
+
 describe('meta preview mapping', () => {
   const metaFor = async (over) => {
     matches = [match(over)];
