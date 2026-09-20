@@ -220,7 +220,7 @@ CdnLiveProvider.VARIANTS = {
     apiUrl: 'https://api.cdnlivetv.is/api/v1/events/sports/?user=streamsports99&plan=vip',
     sourceKey: 'streamsports99',
     idPrefix: 'ss99_',
-    refererOrigin: 'https://streamsports99.fun',
+    refererOrigin: 'https://streamsports99.is',
     streamLabel: 'VIP Stream',
     allCategories: true,
     // Upstream lists fixtures days ahead that never get channels.

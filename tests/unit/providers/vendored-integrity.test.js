@@ -10,7 +10,7 @@ const PINNED = {
   'gasm_india.js':    '551a6bd338b032a0240977bfcad8b28fc4413cd15c0ada212d094f501c5eebce',
   'lock.wasm':        'ccd5dd855e5aa96ac865428f195f4ead31d658872b36e4a96982c62a5ce2be97',
   'gasm.wasm':        '9f467ba46e9890b2c5855cda60ca331e769f5b76a0a6da7a07bff10f6f1c0401',
-  'stream-lock.wasm': '914c1bb4038c9eec2ce41a3245bf8d81489d0a66abed9fadc08ec1d9afe983c1',
+  'streamcorner_worker.js': '57d35dab935eed7c7bad20ae6d0fb4ba1c5d63e94c91f9deed3b1e375c65a353',
 };
 
 const dir = path.join(__dirname, '..', '..', '..', 'src', 'providers');

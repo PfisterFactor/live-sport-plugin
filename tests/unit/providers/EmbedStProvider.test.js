@@ -68,7 +68,7 @@ describe('EmbedStProvider.resolveStream', () => {
     const url = 'https://sportsembed.su/embed/6028327/club-america-columbus-crew/platinum/1';
     const streams = await makeProvider().resolveStream(url, 'football', 'A vs B');
     expect(streams).toHaveLength(2);
-    expect(streams[0].url).toBe(`${BASE_URL}/api/manifest?url=${encodeURIComponent('https://edge.se/live/a.m3u8')}&referer=${encodeURIComponent('https://sportsembed.su/')}&origin=${encodeURIComponent('https://sportsembed.su')}`);
+    expect(streams[0].url).toBe(`${BASE_URL}/api/manifest?url=${encodeURIComponent('https://edge.se/live/a.m3u8')}&referer=${encodeURIComponent('https://sportsembed.su/')}&origin=${encodeURIComponent('https://sportsembed.su')}&renew=embedst&embed=${encodeURIComponent(url)}`);
     expect(streams[0].title).toBe('[Direct] A vs B');
   });
 

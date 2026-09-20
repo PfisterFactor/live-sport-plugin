@@ -4,6 +4,7 @@ const StreamEntity = require('../domain/StreamEntity');
 const { findEmbedIframe } = require('./embedIframe');
 const { runProviderScript } = require('./runner');
 const path = require('path');
+const { manifestProxyUrl } = require('../proxyUrl');
 
 class EmbedStProvider extends BaseProvider {
   constructor(opts) {
@@ -14,6 +15,37 @@ class EmbedStProvider extends BaseProvider {
 
   async getMatches() {
     return [];
+  }
+
+  /**
+   * Extracts a signed m3u8 from an embed.st (or sportsembed.su) page.
+   * Shared by resolveStream and the manifest proxy's token renewal.
+   */
+  async extractM3u8(embedUrl) {
+    if (embedUrl.includes('sportsembed.su') || embedUrl.includes('watchfooty.st/embed')) {
+      const { extractSportsEmbed } = require('./SportsEmbedExtractor');
+      const m3u8 = await extractSportsEmbed(embedUrl);
+      return m3u8 ? { m3u8, referer: 'https://sportsembed.su/' } : null;
+    }
+
+    const parts = embedUrl.split('/');
+    const user = parts[parts.length - 3];
+    const event = parts[parts.length - 2];
+    const id = parts[parts.length - 1];
+    if (!user || !event || !id) return null;
+
+    const scriptPath = path.join(__dirname, 'run_wasm_native.js');
+    const stdout = await runProviderScript(scriptPath, [user, event, id, embedUrl]);
+    const urlMatch = stdout.match(/https:\/\/[^\s"]+\.m3u8/);
+    if (!urlMatch) return null;
+
+    let referer;
+    try {
+      referer = new URL(embedUrl).origin + '/';
+    } catch (_) {
+      referer = 'https://embed.st/';
+    }
+    return { m3u8: urlMatch[0], referer };
   }
 
   async resolveStream(sourceId, matchCategory, matchTitle, src = {}) {
@@ -82,56 +114,25 @@ class EmbedStProvider extends BaseProvider {
     // ─── Tier 1: Native WASM decryption ─────────────────────────────────────
     if (streams.length === 0) {
       try {
-        // Parse the user, event, id from the URL: https://embed.st/embed/admin/ppv-celtic-vs-lask-linz/1
-        const parts = embedUrl.split('/');
-        const user  = parts[parts.length - 3];
-        const event = parts[parts.length - 2];
-        const id    = parts[parts.length - 1];
+        console.log(`[${this.name}] Decrypting native stream for ${embedUrl}...`);
+        const extracted = await this.extractM3u8(embedUrl);
 
-        if (user && event && id && !embedUrl.includes('sportsembed.su')) {
-          console.log(`[${this.name}] Decrypting native WASM for ${user}/${event}/${id}...`);
-
-          const scriptPath = path.join(__dirname, 'run_wasm_native.js');
-          const stdout = await runProviderScript(scriptPath, [user, event, id, embedUrl]);
-          const urlMatch = stdout.match(/https:\/\/[^\s"]+\.m3u8/);
-          const m3u8Url = urlMatch ? urlMatch[0] : null;
-
-          if (m3u8Url) {
-            console.log(`[${this.name}] Natively decrypted M3U8 for ${matchTitle}: ${m3u8Url}`);
-            const { BASE_URL } = require('../config');
-            const proxyUrl = `${BASE_URL}/api/manifest?url=${encodeURIComponent(m3u8Url)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(new URL(referer).origin)}`;
-            streams.push(new StreamEntity({
-              name: 'EmbedSt',
-              title: `[Direct] ${matchTitle}`,
-              url: proxyUrl,
-              behaviorHints: { 
-                notWebReady: true
-              },
-              resolution: 'HD'
-            }));
-          } else {
-            console.warn(`[${this.name}] Native decryption failed to extract M3U8 for ${embedUrl}`);
-          }
-        } else if (embedUrl.includes('sportsembed.su') || embedUrl.includes('watchfooty.st/embed')) {
-            console.log(`[${this.name}] Decrypting native WASM for sportsembed...`);
-            try {
-                const { extractSportsEmbed } = require('./SportsEmbedExtractor');
-                const m3u8Url = await extractSportsEmbed(embedUrl);
-                if (m3u8Url) {
-                    console.log(`[${this.name}] Natively decrypted M3U8 for sportsembed: ${m3u8Url}`);
-                    const { BASE_URL } = require('../config');
-                    const proxyUrl = `${BASE_URL}/api/manifest?url=${encodeURIComponent(m3u8Url)}&referer=${encodeURIComponent('https://sportsembed.su/')}&origin=${encodeURIComponent('https://sportsembed.su')}`;
-                    streams.push(new StreamEntity({
-                        name: 'EmbedSt',
-                        title: `[Direct] ${matchTitle}`,
-                        url: proxyUrl,
-                        behaviorHints: { notWebReady: true },
-                        resolution: 'HD'
-                    }));
-                }
-            } catch (err) {
-                console.warn(`[${this.name}] SportsEmbed Decryptor error: ${err.message}`);
-            }
+        if (extracted) {
+          console.log(`[${this.name}] Natively decrypted M3U8 for ${matchTitle}: ${extracted.m3u8}`);
+          streams.push(new StreamEntity({
+            name: 'EmbedSt',
+            title: `[Direct] ${matchTitle}`,
+            url: manifestProxyUrl({
+              url: extracted.m3u8,
+              referer: extracted.referer,
+              renew: 'embedst',
+              embed: embedUrl,
+            }),
+            behaviorHints: { notWebReady: true },
+            resolution: 'HD'
+          }));
+        } else {
+          console.warn(`[${this.name}] Native decryption failed to extract M3U8 for ${embedUrl}`);
         }
       } catch (err) {
         console.warn(`[${this.name}] Decryptor error for ${embedUrl}: ${err.message}`);

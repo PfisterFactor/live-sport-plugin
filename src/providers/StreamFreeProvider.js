@@ -2,6 +2,19 @@ const BaseProvider = require('./BaseProvider');
 const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
+const { manifestProxyUrl } = require('../proxyUrl');
+
+/** Reads the `_0x` quality -> {_t,_e,_n} token map out of a StreamFree embed page. */
+function parseEmbedTokens(html) {
+  if (!html) return null;
+  const match = html.match(/const\s+_0x\s*=\s*(\{.*?\});/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch (_) {
+    return null;
+  }
+}
 
 class StreamFreeProvider extends BaseProvider {
   constructor(opts) {
@@ -38,6 +51,36 @@ class StreamFreeProvider extends BaseProvider {
         return await res.json();
       }
     );
+  }
+
+  /**
+   * Re-signs an expired StreamFree manifest URL. The path stays the same; only
+   * the `_t`/`_e`/`_n` token trio is re-read from the embed page, matched to
+   * the quality already present in the dead URL's path segment.
+   */
+  async refreshSignedUrl(embedUrl, deadUrl) {
+    const html = await this.embedFetcher.fire(embedUrl);
+    const tokens = parseEmbedTokens(html);
+    if (!tokens) return null;
+
+    let parsed;
+    try {
+      parsed = new URL(deadUrl);
+    } catch (_) {
+      return null;
+    }
+
+    const segment = parsed.pathname.split('/').filter(Boolean).slice(-2)[0] || '';
+    const quality = Object.keys(tokens)
+      .filter((q) => tokens[q] && tokens[q]._t && segment.includes(q))
+      .sort((a, b) => b.length - a.length)[0];
+    if (!quality) return null;
+
+    const t = tokens[quality];
+    parsed.searchParams.set('_t', t._t);
+    parsed.searchParams.set('_e', t._e);
+    parsed.searchParams.set('_n', t._n);
+    return { m3u8: parsed.toString(), referer: embedUrl };
   }
 
   normalizeCategory(cat) {
@@ -81,7 +124,6 @@ class StreamFreeProvider extends BaseProvider {
   async resolveStream(sourceId, matchCategory, matchTitle) {
     try {
       const { safeFetch } = require('../impitClient');
-      const { BASE_URL } = require('../config');
       const resScore = (q) => { const m = String(q).match(/(\d+)/); return m ? parseInt(m[1], 10) : 0; };
 
       // ── Step 1: Find all available sources from stream-status ────────────────
@@ -131,12 +173,11 @@ class StreamFreeProvider extends BaseProvider {
           const html = await this.embedFetcher.fire(embedUrl);
           if (!html) continue;
 
-          const tokenMatch = html.match(/const\s+_0x\s*=\s*(\{.*?\});/);
-          if (!tokenMatch) {
+          const tokens = parseEmbedTokens(html);
+          if (!tokens) {
             console.warn(`[StreamFree] No _0x tokens in embed for ${sourceId}${src.suffix}`);
             continue;
           }
-          const tokens = JSON.parse(tokenMatch[1]);
 
           // Pick best quality: prefer stream-status confirmed ones, fallback to all sorted by res
           const tokenKeys = Object.keys(tokens).filter(k => tokens[k] && tokens[k]._t);
@@ -159,7 +200,16 @@ class StreamFreeProvider extends BaseProvider {
             targetUrl = `${hlsPath}?_t=${t._t}&_e=${t._e}&_n=${t._n}`;
           }
 
-          const proxyUrl = `${BASE_URL}/api/manifest?url=${encodeURIComponent(targetUrl)}&referer=${encodeURIComponent(embedUrl)}&origin=https://streamfree.top`;
+          // External URLs are signed by a third party, so only our own signed
+          // paths advertise renewal.
+          const isOwnSigned = targetUrl.includes('streamfree.top/live-');
+          const proxyUrl = manifestProxyUrl({
+            url: targetUrl,
+            referer: embedUrl,
+            origin: 'https://streamfree.top',
+            renew: isOwnSigned ? 'streamfree' : null,
+            embed: embedUrl,
+          });
           const label = src.suffix ? `StreamFree S${src.srcNum} (${bestQuality})` : `StreamFree (${bestQuality})`;
 
           streams.push(new StreamEntity({

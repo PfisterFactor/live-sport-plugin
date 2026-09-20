@@ -24,6 +24,7 @@ const BaseProvider = require('./BaseProvider');
 const StreamEntity = require('../domain/StreamEntity');
 const path = require('path');
 const { runProviderScript } = require('./runner');
+const { manifestProxyUrl } = require('../proxyUrl');
 
 // 🔒
 // Domain flags: known CF-protected domains that must skip server-side scraping.
@@ -65,35 +66,46 @@ class EmbedIndiaProvider extends BaseProvider {
     } catch (_) {}
   }
 
+  /**
+   * Extracts a signed m3u8 from an embedindia page.
+   * Shared by resolveStream and the manifest proxy's token renewal.
+   */
+  async extractM3u8(embedUrl, referer) {
+    if (!embedUrl.includes('embedindia')) return null;
+
+    const match = embedUrl.match(/embed(?:-noads)?\/(?:admin\/)?([^\/?]+)/);
+    if (!match) return null;
+    const channelId = match[1];
+
+    const origin = new URL(embedUrl).origin;
+    const effectiveReferer = referer || `${origin}/`;
+    const scriptPath = path.join(__dirname, 'run_gasm_india.js');
+
+    const stdout = await runProviderScript(scriptPath, [channelId, 'EMPTY', 'EMPTY', origin, effectiveReferer]);
+    const m = stdout.match(/"file":\s*"(https?:\/\/[^"]+\.m3u8.*?)"/);
+    if (!m) return null;
+
+    console.log(`[EmbedIndia] Native WASM Extracted M3U8: ${m[1]}`);
+    return { m3u8: m[1], referer: effectiveReferer };
+  }
+
   async _tryWasmExtraction(embedUrl, referer, matchTitle) {
     try {
-      if (!embedUrl.includes('embedindia')) return null;
-      
-      const match = embedUrl.match(/embed(?:-noads)?\/(?:admin\/)?([^\/?]+)/);
-      if (!match) return null;
-      const channelId = match[1];
+      const extracted = await this.extractM3u8(embedUrl, referer);
+      if (!extracted) return null;
 
-      const scriptPath = path.join(__dirname, 'run_gasm_india.js');
-      const origin = new URL(embedUrl).origin;
-
-      const stdout = await runProviderScript(scriptPath, [channelId, 'EMPTY', 'EMPTY', origin, referer]);
-
-      const m = stdout.match(/"file":\s*"(https?:\/\/[^"]+\.m3u8.*?)"/);
-      if (m) {
-        console.log(`[EmbedIndia] Native WASM Extracted M3U8: ${m[1]}`);
-        const { BASE_URL } = require('../config');
-        const proxyUrl = `${BASE_URL}/api/manifest?url=${encodeURIComponent(m[1])}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}`;
-
-        return new StreamEntity({
-          name: 'EmbedIndia',
-          title: `EmbedIndia (${matchTitle})`,
-          url: proxyUrl,
-          behaviorHints: { 
-            notWebReady: true
-          },
-          resolution: 'HD'
-        });
-      }
+      return new StreamEntity({
+        name: 'EmbedIndia',
+        title: `EmbedIndia (${matchTitle})`,
+        url: manifestProxyUrl({
+          url: extracted.m3u8,
+          referer: extracted.referer,
+          renew: 'embedindia',
+          embed: embedUrl,
+        }),
+        behaviorHints: { notWebReady: true },
+        resolution: 'HD'
+      });
     } catch (err) {
       console.warn(`[${this.name}] WASM extraction failed for ${embedUrl}: ${err.message}`);
     }

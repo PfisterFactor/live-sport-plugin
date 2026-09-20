@@ -10,10 +10,13 @@
 
 const impitClient = require('../impitClient');
 const { parsePlaylist } = require('../services/m3u8');
+const renewal = require('../services/StreamRenewal');
 
 const MANIFEST_TTL_MS = 3000;
 const MANIFEST_CACHE_MAX = 100;
-const MANIFEST_NEGATIVE_TTL_MS = 15 * 1000;
+const MANIFEST_NEGATIVE_TTL_MS = 2000;
+const MAX_START_OFFSET_S = 15;
+const LIVE_EDGE_HOLDBACK_SEGMENTS = 3;
 const manifestCache = new Map();      // key -> { body, expiresAt, lastAccess }
 const manifestInFlight = new Map();   // key -> Promise (coalesced upstream fetch)
 
@@ -111,9 +114,13 @@ function manifestCacheSetNegative(key, status, body) {
   evictManifestCacheIfNeeded();
 }
 
+const NON_M3U8 = 'Upstream returned non-m3u8 body';
+const TOKEN_DEAD_STATUSES = new Set([403, 404, 410]);
+
 /**
  * Fetches the upstream manifest. Throws on failure so coalesced waiters share
- * the same outcome; successful bodies are cached by the caller.
+ * the same outcome; successful bodies are cached by the caller. Live players
+ * poll this on every segment, so the budget is one attempt and short.
  */
 async function fetchUpstreamManifest(targetUrl, referer, origin) {
   const headers = {
@@ -121,10 +128,115 @@ async function fetchUpstreamManifest(targetUrl, referer, origin) {
     'Origin': origin,
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36'
   };
-  // A hard 10 s timeout ensures a hung upstream can never hold the viewer's poll.
-  const result = await impitClient.safeFetch(targetUrl, { headers, timeoutMs: 10000 });
-  if (!result.ok) throw new Error(`HTTP ${result.status}`);
-  return await result.text();
+  const result = await impitClient.safeFetch(targetUrl, { headers, timeoutMs: 5000, attempts: 1 });
+  if (!result.ok) {
+    const err = new Error(`HTTP ${result.status}`);
+    err.status = result.status;
+    throw err;
+  }
+  const body = await result.text();
+  if (!body.includes('#EXT')) {
+    console.error('[ManifestProxy] Upstream returned non-m3u8 body for', targetUrl);
+    const err = new Error(NON_M3U8);
+    err.status = 404;
+    throw err;
+  }
+  return body;
+}
+
+/** True when the failure looks like a dead signing token rather than a transport blip. */
+function isTokenDead(err) {
+  return !!err && (err.message === NON_M3U8 || TOKEN_DEAD_STATUSES.has(err.status));
+}
+
+/** Rebuilds a child playlist URL against a re-minted parent manifest. */
+function resolveAgainst(parentUrl, rel) {
+  if (!rel) return parentUrl;
+  try {
+    return new URL(rel, parentUrl).toString();
+  } catch (_) {
+    return parentUrl;
+  }
+}
+
+/**
+ * Seconds behind the live edge to start playback, or 0 to leave the player's
+ * default. Starting deeper than the default only helps when the window has
+ * room; the oldest segments leave the window on the next refresh.
+ */
+function startOffsetSeconds(targetDuration, totalDuration) {
+  if (!targetDuration || !totalDuration) return 0;
+  const holdback = LIVE_EDGE_HOLDBACK_SEGMENTS * targetDuration;
+  const offset = Math.min(MAX_START_OFFSET_S, totalDuration - holdback);
+  return offset > holdback ? offset : 0;
+}
+
+function setPlaylistHeaders(res) {
+  res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store');
+}
+
+/**
+ * Rewrites a live manifest for the player: injects the live-edge start offset,
+ * absolutizes chunk URLs against the manifest they came from, and routes nested
+ * playlists back through this proxy.
+ */
+function rewriteManifest(out, manifestUrl, referer, origin, descriptor) {
+  const { targetDuration, totalDuration } = parsePlaylist(out);
+  const ttlMs = targetDuration ? (targetDuration * 1000) / 2 : MANIFEST_TTL_MS;
+
+  const isLive = !out.includes('#EXT-X-ENDLIST');
+  const startOffset = isLive && !out.includes('#EXT-X-START') ? startOffsetSeconds(targetDuration, totalDuration) : 0;
+  let injectedStart = startOffset === 0;
+
+  const rewritten = out.split('\n').map(line => {
+    const l = line.trim();
+
+    let resultLine = line;
+
+    if (!injectedStart && (l === '#EXTM3U' || l.startsWith('#EXT-X-VERSION'))) {
+      const carriageReturn = line.endsWith('\r') ? '\r' : '';
+      resultLine = `${line}\n#EXT-X-START:TIME-OFFSET=-${startOffset}${carriageReturn}`;
+      injectedStart = true;
+    }
+
+    if (!l || l.startsWith('#')) return resultLine;
+
+    let absoluteUrl = l;
+    try {
+      const chunkUrl = new URL(l, manifestUrl);
+      const parsedManifest = new URL(manifestUrl);
+
+      parsedManifest.searchParams.forEach((val, key) => {
+        if (!chunkUrl.searchParams.has(key)) {
+          chunkUrl.searchParams.set(key, val);
+        }
+      });
+      absoluteUrl = chunkUrl.toString();
+    } catch (err) {
+      absoluteUrl = l;
+    }
+
+    if (absoluteUrl.includes('.m3u8')) {
+      let child = `/api/manifest?url=${encodeURIComponent(absoluteUrl)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}`;
+      if (descriptor) {
+        // `rel` lets a child playlist be rebuilt against a re-minted parent.
+        child += `&renew=${encodeURIComponent(descriptor.source)}`
+          + `&embed=${encodeURIComponent(descriptor.embed)}`
+          + `&base=${encodeURIComponent(descriptor.base)}`
+          + `&rel=${encodeURIComponent(l)}`;
+      }
+      return child;
+    }
+
+    if ((absoluteUrl.includes('.image') || absoluteUrl.includes('.js')) && !absoluteUrl.includes('.ts') && !absoluteUrl.includes('.m3u8')) {
+      absoluteUrl += '#.ts';
+    }
+    return absoluteUrl;
+  });
+
+  return { body: rewritten.join('\n'), ttlMs };
 }
 
 /** Mounts GET /api/manifest on the given Express app. */
@@ -133,6 +245,9 @@ function mount(app) {
     const targetUrl = req.query.url;
     const referer = req.query.referer || 'https://embed.st/';
     const origin = req.query.origin || 'https://embed.st';
+    const renewSource = req.query.renew;
+    const renewEmbed = req.query.embed;
+    const renewRel = typeof req.query.rel === 'string' ? req.query.rel : null;
 
     if (!targetUrl) return res.status(400).send('Missing url');
     if (!parseSafeTargetUrl(targetUrl)) {
@@ -140,16 +255,24 @@ function mount(app) {
       return res.status(400).send('Invalid url');
     }
 
+    const renewable = typeof renewEmbed === 'string'
+      && renewal.isRenewable(renewSource)
+      && !!parseSafeTargetUrl(renewEmbed);
+
+    // A child playlist renews through its parent, so both share one base key.
+    const renewBase = renewable && typeof req.query.base === 'string' ? req.query.base : targetUrl;
+    const descriptor = renewable ? { source: renewSource, embed: renewEmbed, base: renewBase } : null;
+
     const cacheKey = `${targetUrl}|${referer}|${origin}`;
     const entry = manifestCacheGet(cacheKey);
     if (entry && entry.negative) {
       res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Manifest-Cache', 'NEGATIVE');
       return res.status(entry.status).send(entry.body);
     }
     if (entry) {
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      setPlaylistHeaders(res);
       res.setHeader('X-Manifest-Cache', 'HIT');
       return res.send(entry.body);
     }
@@ -158,60 +281,37 @@ function mount(app) {
       let fetchPromise = manifestInFlight.get(cacheKey);
       if (!fetchPromise) {
         fetchPromise = (async () => {
-          let out = await fetchUpstreamManifest(targetUrl, referer, origin);
-          if (!out.includes('#EXT')) {
-            console.error('[ManifestProxy] Upstream returned non-m3u8 body for', targetUrl);
-            throw new Error('Upstream returned non-m3u8 body');
+          let manifestUrl = targetUrl;
+          let manifestReferer = referer;
+          let usedRenewed = false;
+
+          if (renewable) {
+            const known = renewal.currentUrl(renewSource, renewEmbed, renewBase);
+            if (known) {
+              manifestUrl = resolveAgainst(known.url, renewRel);
+              if (known.referer) manifestReferer = known.referer;
+              usedRenewed = true;
+            }
           }
 
-          const { targetDuration } = parsePlaylist(out);
-          const dynamicTtl = targetDuration ? (targetDuration * 1000) / 2 : MANIFEST_TTL_MS;
+          let out;
+          try {
+            out = await fetchUpstreamManifest(manifestUrl, manifestReferer, origin);
+          } catch (err) {
+            // A remembered URL that fails for any reason (dead token, dead edge
+            // host) is dropped, so the next poll mints a new one.
+            if (!renewable || !(usedRenewed || isTokenDead(err))) throw err;
+            if (usedRenewed) renewal.forget(renewSource, renewEmbed, renewBase);
+            const fresh = await renewal.renew(renewSource, renewEmbed, renewBase);
+            if (!fresh) throw err;
+            manifestUrl = resolveAgainst(fresh.url, renewRel);
+            if (fresh.referer) manifestReferer = fresh.referer;
+            out = await fetchUpstreamManifest(manifestUrl, manifestReferer, origin);
+          }
 
-          const isLive = !out.includes('#EXT-X-ENDLIST');
-          let injectedStart = out.includes('#EXT-X-START');
-
-          const lines = out.split('\n');
-          const rewritten = lines.map(line => {
-            const l = line.trim();
-
-            let resultLine = line;
-
-            if (isLive && !injectedStart && (l === '#EXTM3U' || l.startsWith('#EXT-X-VERSION'))) {
-              const carriageReturn = line.endsWith('\r') ? '\r' : '';
-              resultLine = `${line}\n#EXT-X-START:TIME-OFFSET=-15${carriageReturn}`;
-              injectedStart = true;
-            }
-
-            if (!l || l.startsWith('#')) return resultLine;
-
-            let absoluteUrl = l;
-            try {
-              const chunkUrl = new URL(l, targetUrl);
-              const manifestUrl = new URL(targetUrl);
-
-              manifestUrl.searchParams.forEach((val, key) => {
-                if (!chunkUrl.searchParams.has(key)) {
-                  chunkUrl.searchParams.set(key, val);
-                }
-              });
-              absoluteUrl = chunkUrl.toString();
-            } catch (err) {
-              absoluteUrl = l;
-            }
-
-            if (absoluteUrl.includes('.m3u8')) {
-              return `/api/manifest?url=${encodeURIComponent(absoluteUrl)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}`;
-            }
-
-            if ((absoluteUrl.includes('.image') || absoluteUrl.includes('.js')) && !absoluteUrl.includes('.ts') && !absoluteUrl.includes('.m3u8')) {
-              absoluteUrl += '#.ts';
-            }
-            return absoluteUrl;
-          });
-
-          const rewrittenResult = rewritten.join('\n');
-          manifestCacheSet(cacheKey, rewrittenResult, dynamicTtl);
-          return rewrittenResult;
+          const { body, ttlMs } = rewriteManifest(out, manifestUrl, manifestReferer, origin, descriptor);
+          manifestCacheSet(cacheKey, body, ttlMs);
+          return body;
         })().finally(() => {
           manifestInFlight.delete(cacheKey);
         });
@@ -219,13 +319,12 @@ function mount(app) {
       }
 
       const finalBody = await fetchPromise;
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      setPlaylistHeaders(res);
       res.setHeader('X-Manifest-Cache', 'MISS');
       res.send(finalBody);
     } catch (err) {
-      // 404 semantics let players fail over to another stream.
-      if (err.message === 'Upstream returned non-m3u8 body') {
+      res.setHeader('Cache-Control', 'no-store');
+      if (err.message === NON_M3U8) {
         manifestCacheSetNegative(cacheKey, 404, 'Stream not found or expired');
         return res.status(404).send('Stream not found or expired');
       }

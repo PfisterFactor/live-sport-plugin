@@ -65,14 +65,14 @@ const IMPIT_BUDGET_RATIO = 0.6;
  * safeFetch - fetches a URL using impit when available, falls back to undici.
  *
  * `timeoutMs` is the budget for the whole call: impit retries, backoff, and the
- * undici fallback all draw from it.
+ * undici fallback all draw from it. `attempts` bounds the impit retry loop.
  *
  * @param {string} url
- * @param {object} opts   - { method, headers, body, signal, timeoutMs }
+ * @param {object} opts   - { method, headers, body, signal, timeoutMs, attempts }
  * @returns {{ ok, status, headers, text: () => string, json: () => object }}
  */
 async function safeFetch(url, opts = {}) {
-  const { method = 'GET', headers = {}, body, signal, timeoutMs = 15000 } = opts;
+  const { method = 'GET', headers = {}, body, signal, timeoutMs = 15000, attempts = 3 } = opts;
   const impit = getImpit();
   const deadline = Date.now() + timeoutMs;
   const remaining = () => deadline - Date.now();
@@ -81,7 +81,7 @@ async function safeFetch(url, opts = {}) {
   if (impit) {
     const impitDeadline = Date.now() + timeoutMs * IMPIT_BUDGET_RATIO;
     let lastErr = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
       const budget = impitDeadline - Date.now();
       if (budget <= 0) break;
       let timer;
@@ -103,7 +103,7 @@ async function safeFetch(url, opts = {}) {
       } catch (impitErr) {
         lastErr = impitErr;
         const backoff = Math.min(800 * attempt, impitDeadline - Date.now());
-        if (attempt < 3 && backoff > 0) await new Promise(r => setTimeout(r, backoff));
+        if (attempt < attempts && backoff > 0) await new Promise(r => setTimeout(r, backoff));
       } finally {
         clearTimeout(timer);
       }

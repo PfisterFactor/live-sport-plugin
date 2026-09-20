@@ -138,7 +138,7 @@ describe('TimStreamsProvider.resolveStream', () => {
     const pages = { [embed]: obfuscate('file: "https://edge.ts/live/a.m3u8"', 55, 13) };
     const streams = await makeProvider({ pages }).resolveStream(hex(embed), 'football', 'A vs B');
     expect(streams).toHaveLength(2);
-    expect(streams[0].url).toBe(`${BASE_URL}/api/manifest?url=${encodeURIComponent('https://edge.ts/live/a.m3u8')}&referer=${encodeURIComponent('https://logic.icelanders.st')}&origin=${encodeURIComponent('https://logic.icelanders.st')}`);
+    expect(streams[0].url).toBe(`${BASE_URL}/api/manifest?url=${encodeURIComponent('https://edge.ts/live/a.m3u8')}&referer=${encodeURIComponent('https://logic.icelanders.st')}&origin=${encodeURIComponent('https://logic.icelanders.st')}&renew=timstreams&embed=${encodeURIComponent(embed)}`);
     expect(streams[1].externalUrl).toBe(`/watch?url=${encodeURIComponent(embed)}&title=A%20vs%20B`);
   });
 

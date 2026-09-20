@@ -25,10 +25,10 @@ function parseAttributes(text) {
 
 /**
  * @param {string} text playlist body
- * @returns {{ targetDuration: number|undefined, playlists: Array<{ uri: string, attributes: object }> }}
+ * @returns {{ targetDuration: number|undefined, totalDuration: number, playlists: Array<{ uri: string, attributes: object }> }}
  */
 function parsePlaylist(text) {
-  const manifest = { targetDuration: undefined, playlists: [] };
+  const manifest = { targetDuration: undefined, totalDuration: 0, playlists: [] };
   let pending = null;
 
   for (const raw of text.split('\n')) {
@@ -38,6 +38,9 @@ function parsePlaylist(text) {
     if (line.startsWith('#EXT-X-TARGETDURATION:')) {
       const d = parseInt(line.slice('#EXT-X-TARGETDURATION:'.length), 10);
       if (Number.isFinite(d) && d >= 0) manifest.targetDuration = d;
+    } else if (line.startsWith('#EXTINF:')) {
+      const d = parseFloat(line.slice('#EXTINF:'.length));
+      if (Number.isFinite(d) && d > 0) manifest.totalDuration += d;
     } else if (line.startsWith('#EXT-X-STREAM-INF:')) {
       pending = Object.assign(pending || {}, parseAttributes(line.slice('#EXT-X-STREAM-INF:'.length)));
     } else if (line[0] !== '#' && pending) {

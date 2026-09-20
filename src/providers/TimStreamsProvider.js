@@ -2,7 +2,7 @@ const BaseProvider = require('./BaseProvider');
 const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const { parseTimezone } = require('../timezone');
-const { BASE_URL } = require('../config');
+const { manifestProxyUrl } = require('../proxyUrl');
 
 class TimStreamsProvider extends BaseProvider {
   constructor(opts) {
@@ -195,8 +195,12 @@ class TimStreamsProvider extends BaseProvider {
 
         if (m3u8Url) {
           console.log(`[${this.name}] Extracted M3U8 for ${matchTitle}: ${m3u8Url}`);
-          const { BASE_URL } = require('../config');
-          const proxyUrl = `${BASE_URL}/api/manifest?url=${encodeURIComponent(m3u8Url)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(new URL(referer).origin)}`;
+          const proxyUrl = manifestProxyUrl({
+            url: m3u8Url,
+            referer,
+            renew: 'timstreams',
+            embed: embed.url,
+          });
             
           streams.push(new StreamEntity({
             name: 'TimStreams',

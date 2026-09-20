@@ -27,10 +27,9 @@ function findNodeModules(from) {
 }
 
 function buildCommand(scriptPath) {
+  if (process.versions.bun) return { file: process.execPath, prefix: [] };
   const flags = process.allowedNodeEnvironmentFlags;
-  if (process.versions.bun || !flags || !flags.has('--permission')) {
-    return { file: 'node', prefix: [] };
-  }
+  if (!flags || !flags.has('--permission')) return { file: 'node', prefix: [] };
   const runnerDir = path.dirname(scriptPath);
   const prefix = ['--permission', `--allow-fs-read=${runnerDir}`, '--allow-addons'];
   const nodeModules = findNodeModules(runnerDir);

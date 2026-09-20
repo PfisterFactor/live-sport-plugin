@@ -3,6 +3,8 @@ const { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn 
 const impitClient = require('../../../src/impitClient');
 const { parseSafeTargetUrl } = require('../../../src/routes/manifestProxy');
 const app = require('../../../src/app');
+const container = require('../../../src/container');
+const renewal = require('../../../src/services/StreamRenewal');
 
 let server;
 let base;
@@ -131,16 +133,34 @@ describe('GET /api/manifest', () => {
     expect(q.get('origin')).toBe('https://ref.example');
   });
 
-  it('injects a live edge offset only for playlists without ENDLIST', async () => {
-    const live = freshUrl();
-    safeFetchSpy.mockImplementation(async () => upstream('#EXTM3U\n#EXT-X-TARGETDURATION:6\nseg1.ts\n'));
-    const liveBody = await (await proxy(live)).text();
-    expect(liveBody.split('\n').filter((l) => l.startsWith('#EXT-X-START'))).toHaveLength(1);
+  const segments = (n, dur) => Array.from({ length: n }, (_, i) => `#EXTINF:${dur},\nseg${i}.ts`).join('\n');
+  const startTag = (body) => body.split('\n').filter((l) => l.startsWith('#EXT-X-START'));
 
-    const vod = freshUrl();
-    safeFetchSpy.mockImplementation(async () => upstream('#EXTM3U\n#EXT-X-TARGETDURATION:6\nseg1.ts\n#EXT-X-ENDLIST\n'));
-    const vodBody = await (await proxy(vod)).text();
-    expect(vodBody).not.toContain('#EXT-X-START');
+  it('starts a wide live window 15s behind the edge', async () => {
+    safeFetchSpy.mockImplementation(async () => upstream(`#EXTM3U\n#EXT-X-TARGETDURATION:4\n${segments(10, 4)}\n`));
+    expect(startTag(await (await proxy(freshUrl())).text())).toEqual(['#EXT-X-START:TIME-OFFSET=-15']);
+  });
+
+  it('caps the start offset so three target durations of old segments remain', async () => {
+    safeFetchSpy.mockImplementation(async () => upstream(`#EXTM3U\n#EXT-X-TARGETDURATION:2\n${segments(10, 2)}\n`));
+    expect(startTag(await (await proxy(freshUrl())).text())).toEqual(['#EXT-X-START:TIME-OFFSET=-14']);
+  });
+
+  it('leaves the player default on short windows, master playlists, and VOD', async () => {
+    safeFetchSpy.mockImplementation(async () => upstream(`#EXTM3U\n#EXT-X-TARGETDURATION:4\n${segments(6, 4)}\n`));
+    expect(startTag(await (await proxy(freshUrl())).text())).toHaveLength(0);
+
+    safeFetchSpy.mockImplementation(async () => upstream('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1200000\n720/index.m3u8\n'));
+    expect(startTag(await (await proxy(freshUrl())).text())).toHaveLength(0);
+
+    safeFetchSpy.mockImplementation(async () => upstream(`#EXTM3U\n#EXT-X-TARGETDURATION:4\n${segments(10, 4)}\n#EXT-X-ENDLIST\n`));
+    expect(startTag(await (await proxy(freshUrl())).text())).toHaveLength(0);
+  });
+
+  it('marks every playlist response no-store', async () => {
+    const target = freshUrl();
+    expect((await proxy(target)).headers.get('cache-control')).toBe('no-store');
+    expect((await proxy(target)).headers.get('cache-control')).toBe('no-store');
   });
 
   it('serves the second request from cache', async () => {
@@ -217,8 +237,115 @@ describe('GET /api/manifest', () => {
     expect(new Set(bodies).size).toBe(1);
   });
 
-  it('applies a 10s upstream timeout budget', async () => {
+  it('fetches upstream once with a 5s budget', async () => {
     await proxy(freshUrl());
-    expect(calls[0].opts.timeoutMs).toBe(10000);
+    expect(calls[0].opts.timeoutMs).toBe(5000);
+    expect(calls[0].opts.attempts).toBe(1);
   });
+});
+
+describe('GET /api/manifest token renewal', () => {
+  const PLAYLIST = '#EXTM3U\n#EXT-X-TARGETDURATION:6\nseg1.ts\n';
+  let embed;
+  let dead;
+  let fresh;
+  let extractSpy;
+
+  const renewable = (extra = '') =>
+    proxy(dead, `&renew=timstreams&embed=${encodeURIComponent(embed)}${extra}`);
+
+  beforeEach(() => {
+    renewal.reset();
+    uid++;
+    embed = `https://embed.example.com/e${uid}`;
+    dead = `https://cdn.example.com/secure/dead${uid}/1000/live.m3u8`;
+    fresh = `https://cdn.example.com/secure/fresh${uid}/9999/live.m3u8`;
+    extractSpy = spyOn(container.resolve('timStreamsProvider'), 'extractM3u8')
+      .mockImplementation(async () => ({ m3u8: fresh, referer: 'https://embed.example.com' }));
+    safeFetchSpy.mockImplementation(async (url, opts) => {
+      calls.push({ url, opts });
+      return url === fresh ? upstream(PLAYLIST) : upstream('Gone - Token expired', 410);
+    });
+  });
+
+  afterEach(() => extractSpy.mockRestore());
+
+  it('re-mints an expired token and serves the fresh manifest', async () => {
+    const res = await renewable();
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(`https://cdn.example.com/secure/fresh${uid}/9999/seg1.ts`);
+    expect(extractSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses the re-minted token instead of scraping the embed on every poll', async () => {
+    await renewable();
+    const second = await renewable('&origin=https%3A%2F%2Fother.example');
+    expect(second.status).toBe(200);
+    expect(extractSpy).toHaveBeenCalledTimes(1);
+    expect(calls.filter((c) => c.url === dead)).toHaveLength(1);
+  });
+
+  it('fails without renewing when the stream is dead rather than the token', async () => {
+    safeFetchSpy.mockImplementation(async (url) => {
+      calls.push({ url });
+      return upstream('upstream down', 500);
+    });
+    const res = await renewable();
+    expect(res.status).toBe(502);
+    expect(extractSpy).not.toHaveBeenCalled();
+  });
+
+  it('ignores a renewal descriptor naming an unknown source', async () => {
+    const res = await proxy(dead, `&renew=nosuchsource&embed=${encodeURIComponent(embed)}`);
+    expect(res.status).toBe(502);
+    expect(extractSpy).not.toHaveBeenCalled();
+  });
+
+  it('passes the renewal descriptor down to variant playlists of a master', async () => {
+    const master = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\nhigh/mono.m3u8\n';
+    safeFetchSpy.mockImplementation(async (url) => {
+      calls.push({ url });
+      return url === fresh ? upstream(master) : upstream('Gone - Token expired', 410);
+    });
+    const body = await (await renewable()).text();
+    const child = body.split('\n').find((l) => l.startsWith('/api/manifest'));
+    const q = new URL(`http://x${child}`).searchParams;
+    expect(q.get('renew')).toBe('timstreams');
+    expect(q.get('embed')).toBe(embed);
+    expect(q.get('base')).toBe(dead);
+    expect(q.get('rel')).toBe('high/mono.m3u8');
+  });
+
+  it('rebuilds a dead variant playlist against the re-minted master', async () => {
+    const freshVariant = new URL('high/mono.m3u8', fresh).toString();
+    safeFetchSpy.mockImplementation(async (url) => {
+      calls.push({ url });
+      return url === freshVariant ? upstream(PLAYLIST) : upstream('Gone - Token expired', 410);
+    });
+    const deadVariant = new URL('high/mono.m3u8', dead).toString();
+    const res = await proxy(deadVariant,
+      `&renew=timstreams&embed=${encodeURIComponent(embed)}&base=${encodeURIComponent(dead)}&rel=${encodeURIComponent('high/mono.m3u8')}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(new URL('seg1.ts', freshVariant).toString());
+    expect(extractSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a re-minted url whose edge host stops answering and mints another', async () => {
+    const second = `https://cdn.example.com/secure/second${uid}/9999/live.m3u8`;
+    let minted = 0;
+    extractSpy.mockImplementation(async () => ({ m3u8: ++minted === 1 ? fresh : second, referer: null }));
+    safeFetchSpy.mockImplementation(async (url) => {
+      calls.push({ url });
+      if (url === second) return upstream(PLAYLIST);
+      if (url === fresh) throw new Error('The operation timed out.');
+      return upstream('Gone - Token expired', 410);
+    });
+
+    expect((await renewable()).status).toBe(502);
+    await new Promise((r) => setTimeout(r, renewal.MIN_RENEW_INTERVAL_MS + 50));
+    const healed = await renewable();
+    expect(healed.status).toBe(200);
+    expect(await healed.text()).toContain(`https://cdn.example.com/secure/second${uid}/9999/seg1.ts`);
+    expect(minted).toBe(2);
+  }, renewal.MIN_RENEW_INTERVAL_MS + 10000);
 });

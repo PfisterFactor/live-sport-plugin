@@ -8,7 +8,7 @@ const container = require('./container');
 const SOURCES = {
   watchfooty: { priority: 2, registration: 'watchFootyProvider', label: 'WatchFooty', defaultEnabled: true, referer: 'https://watchfooty.st/' },
   cdnlive: { priority: 3, registration: 'cdnLiveProvider', label: 'CDNLiveTV', defaultEnabled: true, referer: 'https://cdnlivetv.tv/' },
-  streamsports99: { priority: 4, registration: 'streamSports99Provider', label: 'StreamSports99', defaultEnabled: true, referer: 'https://streamsports99.fun/' },
+  streamsports99: { priority: 4, registration: 'streamSports99Provider', label: 'StreamSports99', defaultEnabled: true, referer: 'https://streamsports99.is/' },
   streamic: { priority: 5, registration: 'streamicProvider', label: 'Streamic', defaultEnabled: true, passSrc: true, referer: 'https://streamic.st/' },
   streamfree: {
     priority: 8,
@@ -21,7 +21,11 @@ const SOURCES = {
   sportyhunter: { priority: 12, registration: 'sportyHunterProvider', label: 'SportyHunter', defaultEnabled: true, referer: 'https://sportyhunter.xyz/' },
   embedindia: { priority: 15, registration: 'embedIndiaProvider', label: 'EmbedIndia', defaultEnabled: false, passSrc: true },
   embedst: { priority: 1.5, registration: 'embedStProvider', label: 'Embed.st', defaultEnabled: true, passSrc: true },
+  ppv: { priority: 1.5, registration: 'ppvProvider', label: 'PPV', defaultEnabled: true, passSrc: true },
   streamedpk: { priority: 1.5, registration: 'streamedPkProvider', label: 'Streamed.pk', defaultEnabled: true, passSrc: true, referer: 'https://embed.st/' },
+  streamcorner: { priority: 6, registration: 'streamCornerProvider', label: 'StreamCorner', defaultEnabled: true, referer: 'https://streamcorner.st/' },
+  zlive: { priority: 7, registration: 'zliveProvider', label: 'ZLive', defaultEnabled: true, passSrc: true },
+  dlive: { priority: 10, registration: 'dliveProvider', label: 'DaddyLive', defaultEnabled: true, passSrc: true, referer: 'https://dlive.sx/' },
 };
 
 // Unknown sources are likely new Streamed.pk sub-sources - 1.5 keeps them near the top.

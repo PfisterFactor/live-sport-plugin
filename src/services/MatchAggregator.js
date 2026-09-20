@@ -132,8 +132,8 @@ function withSyncDeadline(provider) {
 }
 
 class MatchAggregator {
-  constructor({ streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, cacheService }) {
-    this.providers = [streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider]
+  constructor({ streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, ppvProvider, streamCornerProvider, zliveProvider, dliveProvider, cacheService }) {
+    this.providers = [streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, ppvProvider, streamCornerProvider, zliveProvider, dliveProvider]
       .filter(p => p && typeof p.getMatches === 'function');
     this.cacheService = cacheService;
   }

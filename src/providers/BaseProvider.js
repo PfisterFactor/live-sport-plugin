@@ -81,6 +81,30 @@ class BaseProvider {
   }
 
   /**
+   * Category label mapper with league-name keywords that the generic
+   * normalizeCategory rules miss (BRASILEIRÃO, Australian Football, ...).
+   * Specific sports are checked before the broad football catch-alls.
+   */
+  mapCategoryLabel(label) {
+    const c = String(label || '').toLowerCase();
+    if (/big\s*brother|reality|tv\s*shows|entertainment/.test(c)) return 'other';
+    if (/cricket|caribbean\s*premier/.test(c)) return 'cricket';
+    if (/darts/.test(c)) return 'darts';
+    if (/golf/.test(c)) return 'golf';
+    if (/tennis/.test(c)) return 'tennis';
+    if (/basketball|nba|wnba|ncaa hoops/.test(c)) return 'basketball';
+    if (/american\s*football|americanfootball|nfl|ncaaf|cfl|ufl|college\s*football/.test(c)) return 'american_football';
+    if (/baseball|mlb/.test(c)) return 'baseball';
+    if (/hockey|nhl|khl/.test(c)) return 'hockey';
+    if (/motor|racing|f1|formula|nascar|moto\s*gp|cycling/.test(c)) return 'motorsport';
+    if (/fight|mma|boxing|wrestling|ufc|wwe/.test(c)) return 'mma';
+    if (/aussie|australian\s*football/.test(c)) return 'rugby';
+    if (/rugby|nrl/.test(c)) return 'rugby';
+    if (/soccer|football|futsal|la\s*liga|brasileir|serie\s*a|bundesliga|ligue\s*1|eredivisie|champions\s*league|europa\s*league|liga\s*mx|mls|fa\s*cup|copa\s*libertadores|copa\s*america|world\s*cup|nations\s*league|league\s*one|usl|nwsl|championship/.test(c)) return 'football';
+    return this.normalizeCategory(label);
+  }
+
+  /**
    * Fetch wrapper that routes through Cloudflare proxy if configured
    */
   async proxyFetch(url, options = {}) {

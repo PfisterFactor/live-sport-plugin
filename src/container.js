@@ -13,6 +13,10 @@ const CdnLiveProvider = require('./providers/CdnLiveProvider');
 const StreamicProvider = require('./providers/StreamicProvider');
 const EmbedIndiaProvider = require('./providers/EmbedIndiaProvider');
 const EmbedStProvider = require('./providers/EmbedStProvider');
+const PpvProvider = require('./providers/PpvProvider');
+const StreamCornerProvider = require('./providers/StreamCornerProvider');
+const ZliveProvider = require('./providers/ZliveProvider');
+const DliveProvider = require('./providers/DliveProvider');
 const StreamedPkProvider = require('./providers/StreamedPkProvider');
 
 const registrations = {
@@ -33,6 +37,10 @@ const registrations = {
   embedIndiaProvider: (c) => new EmbedIndiaProvider(c),
   embedStProvider: (c) => new EmbedStProvider(c),
   streamedPkProvider: (c) => new StreamedPkProvider(c),
+  ppvProvider: (c) => new PpvProvider(c),
+  streamCornerProvider: (c) => new StreamCornerProvider(c),
+  zliveProvider: (c) => new ZliveProvider(c),
+  dliveProvider: (c) => new DliveProvider(c),
 };
 
 const instances = new Map();
