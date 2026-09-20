@@ -357,13 +357,27 @@ async function handleStream(type, id, config) {
     s.behaviorHints = s.behaviorHints || {};
     s.behaviorHints.bingeGroup = `nuvio_sport_${matchId}`;
     
-    // If it's a direct m3u8 stream and not routed through our proxy, mark it notWebReady
-    if (s.url && s.url.includes('.m3u8') && !s.url.includes('/api/manifest')) {
+    // Segment CDNs gate on Referer/Origin even when the playlist is proxied,
+    // and the player fetches segments directly.
+    if (s.url && s.url.includes('.m3u8')) {
       s.behaviorHints.notWebReady = true;
 
-      const referer = REFERER_BY_LABEL[providerName];
-      if (referer && !s.behaviorHints.proxyHeaders) {
-        s.behaviorHints.proxyHeaders = { request: { Referer: referer, Origin: referer } };
+      if (!s.behaviorHints.proxyHeaders) {
+        let referer = null;
+        let origin = null;
+        if (s.url.includes('/api/manifest')) {
+          try {
+            const q = new URL(s.url, 'http://localhost').searchParams;
+            referer = q.get('referer');
+            origin = q.get('origin');
+          } catch (_) {}
+        } else {
+          referer = REFERER_BY_LABEL[providerName];
+        }
+        if (referer) {
+          if (!origin) { try { origin = new URL(referer).origin; } catch (_) { origin = referer; } }
+          s.behaviorHints.proxyHeaders = { request: { Referer: referer, Origin: origin } };
+        }
       }
     }
   });

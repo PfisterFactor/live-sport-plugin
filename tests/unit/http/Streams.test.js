@@ -244,26 +244,39 @@ describe('handleStream', () => {
     expect(streams[0].title).toBe('📡 WatchFooty\n📺 Quality: Auto');
   });
 
-  it('attaches proxy referer hints only to unproxied direct m3u8 streams', async () => {
+  it('attaches segment referer hints to direct and proxied m3u8 streams', async () => {
     fakes.cacheService = {
       getMatches: () => [matchWith({
-        sources: [{ source: 'watchfooty', id: 'w-1' }, { source: 'embedst', id: 'e-1' }],
+        sources: [
+          { source: 'watchfooty', id: 'w-1' },
+          { source: 'streamfree', id: 's-1' },
+          { source: 'embedst', id: 'e-1' },
+        ],
       })],
     };
     fakes.watchFootyProvider = { resolveStream: async () => [{ url: 'https://cdn/a.m3u8', score: 5 }] };
+    fakes.streamFreeProvider = {
+      resolveStream: async () => [{
+        url: '/api/manifest?url=https%3A%2F%2Fcdn%2Fs.m3u8&referer=https%3A%2F%2Fstreamfree.top%2Fembed%2Ffootball%2Fx&origin=https://streamfree.top',
+        score: 3,
+      }],
+    };
     fakes.embedStProvider = {
       resolveStream: async () => [{ url: '/api/manifest?url=https%3A%2F%2Fcdn%2Fb.m3u8', score: 1 }],
     };
 
     const { streams } = await handleStream('tv', 'nuvio_sport_m1');
     const direct = streams.find((s) => s._source === 'watchfooty');
-    const proxied = streams.find((s) => s._source === 'embedst');
+    const proxied = streams.find((s) => s._source === 'streamfree');
+    const bare = streams.find((s) => s._source === 'embedst');
     expect(direct.behaviorHints.proxyHeaders).toEqual({
-      request: { Referer: 'https://watchfooty.st/', Origin: 'https://watchfooty.st/' },
+      request: { Referer: 'https://watchfooty.st/', Origin: 'https://watchfooty.st' },
     });
-    expect(direct.behaviorHints.notWebReady).toBe(true);
-    expect(proxied.behaviorHints.notWebReady).toBeUndefined();
-    expect(proxied.behaviorHints.proxyHeaders).toBeUndefined();
+    expect(proxied.behaviorHints.proxyHeaders).toEqual({
+      request: { Referer: 'https://streamfree.top/embed/football/x', Origin: 'https://streamfree.top' },
+    });
+    expect(streams.every((s) => s.behaviorHints.notWebReady === true)).toBe(true);
+    expect(bare.behaviorHints.proxyHeaders).toBeUndefined();
     expect(streams.every((s) => s.behaviorHints.bingeGroup === 'nuvio_sport_m1')).toBe(true);
   });
 
