@@ -3,41 +3,56 @@ const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 
+/**
+ * API hosts that serve the streamed.pk catalog, tried in order. tvapp1.pk is
+ * a frontend over the handleapi mirror; it uses different route names.
+ */
+const API_MIRRORS = [
+  { base: 'https://streamed.pk/api', all: '/matches/all', live: '/matches/live', stream: '/stream' },
+  { base: 'https://api-backups.handleapi.win', all: '/matches', live: '/matches/live', stream: '/streams' },
+];
+
+/**
+ * streamed.pk / tvapp1.pk. Both serve the same match ids and embed.st embeds.
+ */
 class StreamedPkProvider extends BaseProvider {
   constructor(opts) {
     super(opts);
     this.name = 'StreamedPk';
     this.embedStProvider = opts.embedStProvider;
     this.embedIndiaProvider = opts.embedIndiaProvider;
-    this.apiUrl = 'https://streamed.pk/api';
+    this.mirrors = API_MIRRORS;
 
-    this.fetchMatches = this.circuitBreaker.wrap(`${this.name}_fetchMatches`, async () => {
-      const res = await this.proxyFetch(`${this.apiUrl}/matches/all`, {
-        headers: { 'User-Agent': DEFAULT_UA, 'Accept': 'application/json' },
-        timeoutMs: 15000
-      });
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      return await res.json();
-    });
+    this.fetchMatches = this.circuitBreaker.wrap(`${this.name}_fetchMatches`, () =>
+      this._fetchJson((m) => m.all, 15000));
 
-    this.fetchLiveMatches = this.circuitBreaker.wrap(`${this.name}_fetchLiveMatches`, async () => {
-      const res = await this.proxyFetch(`${this.apiUrl}/matches/live`, {
-        headers: { 'User-Agent': DEFAULT_UA, 'Accept': 'application/json' },
-        timeoutMs: 10000
-      });
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      return await res.json();
-    });
+    this.fetchLiveMatches = this.circuitBreaker.wrap(`${this.name}_fetchLiveMatches`, () =>
+      this._fetchJson((m) => m.live, 10000));
 
-    this.fetchStreams = this.circuitBreaker.wrap(`${this.name}_fetchStreams`, async (source, id) => {
-      const url = `${this.apiUrl}/stream/${encodeURIComponent(source)}/${encodeURIComponent(id)}`;
-      const res = await this.proxyFetch(url, {
-        headers: { 'User-Agent': DEFAULT_UA, 'Accept': 'application/json' },
-        timeoutMs: 10000
-      });
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      return await res.json();
-    });
+    this.fetchStreams = this.circuitBreaker.wrap(`${this.name}_fetchStreams`, (source, id) =>
+      this._fetchJson((m) => `${m.stream}/${encodeURIComponent(source)}/${encodeURIComponent(id)}`, 10000));
+  }
+
+  /**
+   * GET a JSON route from the first mirror that answers 2xx.
+   * @param {(mirror: typeof API_MIRRORS[number]) => string} route path for a mirror
+   * @param {number} timeoutMs per-mirror timeout
+   */
+  async _fetchJson(route, timeoutMs) {
+    let lastErr;
+    for (const mirror of this.mirrors) {
+      try {
+        const res = await this.proxyFetch(`${mirror.base}${route(mirror)}`, {
+          headers: { 'User-Agent': DEFAULT_UA, 'Accept': 'application/json' },
+          timeoutMs,
+        });
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status} from ${mirror.base}`);
+        return await res.json();
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr;
   }
 
   async getMatches() {

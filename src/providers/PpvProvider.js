@@ -4,7 +4,7 @@ const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 
 /**
- * ppv.st / sportsbite.org. Both sites are frontends over the same public
+ * ppv.st / sportsbite.org / tvapp1.pk. All are frontends over the same public
  * api.ppv.st catalog; their embeds live on embedindia.st, which the
  * EmbedIndiaProvider already resolves via the vendored WASM runner.
  */

@@ -102,6 +102,21 @@ describe('StreamedPkProvider.getMatches', () => {
     const matches = await p.getMatches();
     expect(matches.map((m) => m.id)).toEqual(['spk_a']);
   });
+
+  it('falls back to the tvapp1.pk mirror routes when streamed.pk is down', async () => {
+    const p = makeProvider();
+    p.proxyFetch = async (url) => {
+      if (url.startsWith('https://streamed.pk/')) throw new Error('ECONNREFUSED');
+      if (url === 'https://api-backups.handleapi.win/matches') {
+        return res({ json: [{ id: 'm', title: 'M', category: 'football', date: T - 600000, sources: [{ source: 'golf', id: 'g1' }] }] });
+      }
+      if (url === 'https://api-backups.handleapi.win/matches/live') return res({ json: [{ id: 'm', sources: [{ source: 'golf', id: 'g1' }] }] });
+      if (url === 'https://api-backups.handleapi.win/streams/golf/g1') return res({ json: [{ embedUrl: 'https://embed.st/embed/golf/g1/1' }] });
+      return res({ status: 404, body: '' });
+    };
+    const matches = await p.getMatches();
+    expect(matches.map((m) => [m.id, m.status])).toEqual([['spk_m', 'live']]);
+  });
 });
 
 describe('StreamedPkProvider.resolveStream', () => {
