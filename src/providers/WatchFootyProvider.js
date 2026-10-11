@@ -51,6 +51,10 @@ class WatchFootyProvider extends BaseProvider {
             status = 'live';
           } else if (item.status === 'post' || item.status === 'post-final' || item.status === 'postponed' || item.status === 'cancelled') {
             continue; // Skip ended matches
+          } else if (item.status === 'pre') {
+            // 'pre' means the fixture has NOT kicked off; keeping it distinct stops a
+            // delayed match from showing as live once its nominal kickoff passes.
+            status = 'pre';
           }
 
           const matchTime = item.timestamp ? parseTimezone(item.timestamp, 'UTC') : Date.now();
@@ -58,12 +62,7 @@ class WatchFootyProvider extends BaseProvider {
           // Map dynamic sports directly from the API
           const category = this.normalizeCategory(item.sport);
 
-          const posterUrl = item.poster ? (
-            item.poster.startsWith('//') ? `https:${item.poster}` :
-            item.poster.startsWith('http') ? item.poster :
-            item.poster.startsWith('/') ? `https://api.watchfooty.st${item.poster}` :
-            `https://api.watchfooty.st/${item.poster}`
-          ) : null;
+          const posterUrl = item.poster ? new URL(item.poster, 'https://api.watchfooty.st').toString() : null;
 
           matches.push(new MatchEntity({
             id: `wf_${matchId}`,
@@ -85,14 +84,28 @@ class WatchFootyProvider extends BaseProvider {
 
   async resolveStream(sourceId, matchCategory, matchTitle) {
     const streams = [];
+    let skipped = 0;
     try {
       const data = await this.fetchMatchDetails.fire(sourceId);
       const match = Array.isArray(data) ? data[0] : data;
       
       if (match && match.streams && Array.isArray(match.streams)) {
+        const dead = WatchFootyProvider._deadVariants;
+        const now = Date.now();
+        if (dead.size > 200) {
+          for (const [k, v] of dead) if (v <= now) dead.delete(k);
+        }
+
         let idx = 0;
         for (const s of match.streams) {
           if (s.url) {
+            // An unreachable embed costs up to a minute of timeouts; remember it so
+            // repeat requests skip it instead of paying again.
+            if (!s.url.includes('.m3u8') && !s.url.includes('.mp4')) {
+              const exp = dead.get(s.url);
+              if (exp && exp > now) { skipped++; idx++; continue; }
+              if (exp) dead.delete(s.url);
+            }
             const isDirect = s.url.includes('.m3u8') || s.url.includes('.mp4');
             const entityParams = {
               name: `WatchFooty`,
@@ -136,6 +149,7 @@ class WatchFootyProvider extends BaseProvider {
                 }
               } catch (e) {
                 console.warn(`[WatchFootyProvider] Iframe detection failed for ${s.url}: ${e.message}`);
+                dead.set(s.url, Date.now() + WatchFootyProvider.DEAD_TTL_MS);
               }
 
               if (!resolvedViaIframe) {
@@ -153,17 +167,28 @@ class WatchFootyProvider extends BaseProvider {
                           embed: s.url,
                         });
                         entityParams.url = proxyUrl;
-                        entityParams.behaviorHints = { notWebReady: true };
+                        // wfty.st answers 403 without a Referer; declaring proxyHeaders lets
+                        // pre-flight verification pass and lets clients send them too.
+                        entityParams.behaviorHints = {
+                          notWebReady: true,
+                          proxyHeaders: {
+                            request: {
+                              'Referer': 'https://sportsembed.su/',
+                              'Origin': 'https://sportsembed.su',
+                              'User-Agent': DEFAULT_UA,
+                            },
+                          },
+                        };
                         streams.push(new StreamEntity(entityParams));
                     }
                 } catch (e) {
                     console.error(`[WatchFootyProvider] Native extract failed for ${s.url}`, e.message);
-                    entityParams.externalUrl = `/watch?url=${encodeURIComponent(s.url)}&title=${encodeURIComponent(matchTitle || 'WatchFooty')}`;
+                    entityParams.externalUrl = this._webPlayerUrl(s.url, matchTitle);
                     streams.push(new StreamEntity(entityParams));
                 }
               }
             } else {
-              entityParams.externalUrl = `/watch?url=${encodeURIComponent(s.url)}&title=${encodeURIComponent(matchTitle || 'WatchFooty')}`;
+              entityParams.externalUrl = this._webPlayerUrl(s.url, matchTitle);
               streams.push(new StreamEntity(entityParams));
             }
           }
@@ -173,8 +198,21 @@ class WatchFootyProvider extends BaseProvider {
     } catch (err) {
       console.error(`[${this.name}] resolveStream failed for ${sourceId}:`, err.message);
     }
+    if (skipped > 0) {
+      console.log(`[WatchFootyProvider] Skipped ${skipped} known-dead embed variant(s) for ${sourceId}`);
+    }
     return streams;
   }
+
+  /** YouTube links open directly; every other embed goes through the web player page. */
+  _webPlayerUrl(url, matchTitle) {
+    if (/youtube\.com|youtu\.be/i.test(url)) return url;
+    return `/watch?url=${encodeURIComponent(url)}&title=${encodeURIComponent(matchTitle || 'WatchFooty')}`;
+  }
 }
+
+/** Embed variants that failed, url -> expiry (ms); expiry keeps a transient outage from being permanent. */
+WatchFootyProvider._deadVariants = new Map();
+WatchFootyProvider.DEAD_TTL_MS = Number(process.env.WATCHFOOTY_DEAD_TTL_MS || 5 * 60 * 1000);
 
 module.exports = WatchFootyProvider;

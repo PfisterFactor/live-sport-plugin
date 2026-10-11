@@ -17,14 +17,18 @@ const { createApp, serveStatic } = require('./httpApp');
 const path = require('path');
 const fs = require('fs');
 
-const { manifest } = require('./manifest');
+const { renderManifest } = require('./manifest');
 const addonRouter = require('./addonRouter');
-const { getRequestBaseUrl } = require('./config');
+const { getRequestBaseUrl, BASE_URL } = require('./config');
 const container = require('./container');
+const { isLocalDirectRequest } = require('./services/localRequest');
+const guard = require('./services/OutboundUrlGuard');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const WATCH_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'watch.html'), 'utf8');
 const WATCH_EXTRACT_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'watch-extract.html'), 'utf8');
+const BASE_HOST = new URL(BASE_URL).host;
+const LOCAL_HOST_RE = /^(?:localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)(?::\d+)?$/;
 
 /** Substitutes {{NAME}} placeholders in a template with literal string values. */
 function render(template, vars) {
@@ -69,9 +73,28 @@ app.get(['/configure', '/:config/configure'], (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'configure.html'));
 });
 
+// Internal/debug surface for local helper scripts: direct local callers only.
+// A socket-peer check alone would admit the whole internet behind a same-host
+// reverse proxy, so see services/localRequest.js.
 app.get('/api/matches', (req, res) => {
+  if (!isLocalDirectRequest(req)) {
+    return res.status(403).json({ error: 'Forbidden', reason: 'loopback_only' });
+  }
   const matches = container.resolve('cacheService').getMatches();
   res.json(matches);
+});
+
+// Commentary languages the channel detector can tag. English is always ranked
+// first by the add-on, so it is not offered as a selectable priority.
+app.get('/api/options', (req, res) => {
+  const seen = new Set();
+  for (const rule of require('./services/ChannelCountryService').getRules()) {
+    const language = rule && typeof rule.language === 'string' ? rule.language.trim() : '';
+    if (language && language.toLowerCase() !== 'english') seen.add(language);
+  }
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json({ languages: [...seen].sort() });
 });
 
 // /img?url=... serves a cached upstream image, falling back to a generated
@@ -148,6 +171,9 @@ app.get('/api/proxy-embed', async (req, res) => {
     return res.status(403).json({ error: `Domain ${parsed.hostname} is not in the allowed embed domain list.` });
   }
 
+  const verdict = await guard.checkOutboundUrl(parsed.toString());
+  if (!verdict.ok) return guard.rejectBlockedUrl(res, verdict, 'proxy-embed');
+
   try {
     const headers = {
       'User-Agent': PROXY_EMBED_UA,
@@ -156,11 +182,21 @@ app.get('/api/proxy-embed', async (req, res) => {
     };
     if (referer) headers['Referer'] = referer;
 
-    const upstream = await fetch(parsed.toString(), {
-      headers,
-      signal: AbortSignal.timeout(12000),
-      redirect: 'follow'
-    });
+    // Redirects are followed by hand so every hop passes the SSRF guard too.
+    let target = verdict.url;
+    let upstream;
+    for (let hop = 0; ; hop++) {
+      upstream = await fetch(target, {
+        headers,
+        signal: AbortSignal.timeout(12000),
+        redirect: 'manual'
+      });
+      const location = upstream.status >= 300 && upstream.status < 400 ? upstream.headers.get('location') : null;
+      if (!location || hop >= 5) break;
+      const next = await guard.checkOutboundUrl(new URL(location, target).toString());
+      if (!next.ok) return guard.rejectBlockedUrl(res, next, 'proxy-embed');
+      target = next.url;
+    }
 
     const html = await upstream.text();
 
@@ -214,10 +250,10 @@ app.use((req, res, next) => {
             return `${currentBaseUrl}${url}`;
           }
           // Absolute URLs with legacy/static base or localhost/LAN IP
-          const match = url.match(/^(?:https?:\/\/[^\/]+)(\/(?:img|watch|api\/manifest|logo)(?:[?\/].*)?)$/);
-          if (match) {
+          const match = url.match(/^https?:\/\/([^\/]+)(\/(?:img|watch|api\/manifest|logo)(?:[?\/].*|\.[A-Za-z0-9]+)?)$/);
+          if (match && (match[1] === BASE_HOST || LOCAL_HOST_RE.test(match[1]))) {
             modified = true;
-            return `${currentBaseUrl}${match[1]}`;
+            return `${currentBaseUrl}${match[2]}`;
           }
           return url;
         };
@@ -273,30 +309,7 @@ app.use((req, res, next) => {
 // A segment that is not a config object serves the unconfigured manifest.
 app.get('/:config?/manifest.json', (req, res) => {
   const parsedConfig = (req.params.config && addonRouter.decodeConfigSegment(req.params.config)) || {};
-
-  // Clone manifest catalogs
-  const newManifest = JSON.parse(JSON.stringify(manifest));
-  
-  if (typeof parsedConfig.sports === 'string' && parsedConfig.sports !== 'all') {
-    const enabledSports = parsedConfig.sports.split(',');
-    
-    // General catalogs to always keep
-    const keepCatalogs = ['nuvio_sports_live', 'nuvio_sports_upcoming', 'nuvio_sports_teams'];
-    
-    // Add specific catalogs based on selection
-    const sportCatalogs = ['football', 'cricket', 'basketball', 'motorsport', 'hockey', 'baseball', 'mma', 'golf', 'tennis', 'rugby', 'american_football', 'darts'];
-    for (const sport of sportCatalogs) {
-      if (enabledSports.includes(sport)) keepCatalogs.push(`nuvio_sports_${sport}`);
-    }
-    if (enabledSports.includes('other')) keepCatalogs.push('nuvio_sports_other');
-    
-    newManifest.catalogs = newManifest.catalogs.filter(c => keepCatalogs.includes(c.id));
-  }
-  
-  // Remove teams catalog if the user hasn't configured any teams
-  if (typeof parsedConfig.teams !== 'string' || parsedConfig.teams.trim() === '') {
-    newManifest.catalogs = newManifest.catalogs.filter(c => c.id !== 'nuvio_sports_teams');
-  }
+  const newManifest = renderManifest(parsedConfig);
 
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', '*');

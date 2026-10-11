@@ -2,6 +2,7 @@ const { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn 
 
 const container = require('../../../src/container');
 const impitClient = require('../../../src/impitClient');
+const guard = require('../../../src/services/OutboundUrlGuard');
 const app = require('../../../src/app');
 
 let server;
@@ -11,6 +12,7 @@ let base;
 const fakes = {};
 let resolveSpy;
 let safeFetchSpy;
+let guardSpy;
 
 beforeAll(async () => {
   server = app.listen(0);
@@ -39,6 +41,7 @@ beforeEach(() => {
     if (name in fakes) return fakes[name];
     throw new Error(`unexpected resolve('${name}')`);
   });
+  guardSpy = spyOn(guard, 'checkOutboundUrl').mockImplementation(async (url) => ({ ok: true, url, hostname: new URL(url).hostname, addresses: ['93.184.216.34'] }));
   safeFetchSpy = spyOn(impitClient, 'safeFetch').mockImplementation(async () => ({
     ok: true,
     status: 200,
@@ -51,6 +54,7 @@ beforeEach(() => {
 afterEach(() => {
   resolveSpy.mockRestore();
   safeFetchSpy.mockRestore();
+  guardSpy.mockRestore();
 });
 
 describe('CORS', () => {
@@ -137,6 +141,8 @@ describe('response rewriter', () => {
         { url: '/watch?url=https%3A%2F%2Fe.st%2Fa', title: `Stream (${filler})` },
         { url: 'http://10.0.0.5:7000/api/manifest?url=https%3A%2F%2Fe.st%2Fb.m3u8', title: 'B' },
         { url: 'https://cdn.example.com/real.m3u8', title: 'C' },
+        { externalUrl: 'https://www.youtube.com/watch?v=abc123', title: 'D' },
+        { url: 'https://cdn.example.com/logo.png', title: 'E' },
       ],
     };
 
@@ -148,6 +154,8 @@ describe('response rewriter', () => {
     expect(urls).toContain('http://addon.example.org/watch?url=https%3A%2F%2Fe.st%2Fa');
     expect(urls).toContain('http://addon.example.org/api/manifest?url=https%3A%2F%2Fe.st%2Fb.m3u8');
     expect(urls).toContain('https://cdn.example.com/real.m3u8');
+    expect(urls).toContain('https://cdn.example.com/logo.png');
+    expect(body.streams.map((s) => s.externalUrl)).toContain('https://www.youtube.com/watch?v=abc123');
     expect(res.headers.get('content-length')).toBe(String(Buffer.byteLength(JSON.stringify(body))));
   });
 
@@ -382,5 +390,72 @@ describe('/api/proxy-embed', () => {
     const res = await realFetch(`${base}/api/proxy-embed?url=${encodeURIComponent('https://embed.st/live/1')}`);
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: 'Failed to fetch embed page', detail: 'socket hang up' });
+  });
+});
+
+describe('/api/matches gate', () => {
+  it('serves a direct local caller', async () => {
+    const res = await fetch(`${base}/api/matches`);
+    expect(res.status).toBe(200);
+  });
+
+  it('refuses a request that came through a reverse proxy', async () => {
+    for (const header of ['X-Forwarded-For', 'X-Real-IP', 'CF-Connecting-IP']) {
+      const res = await fetch(`${base}/api/matches`, { headers: { [header]: '203.0.113.9' } });
+      expect(res.status).toBe(403);
+      expect((await res.json()).reason).toBe('loopback_only');
+    }
+  });
+});
+
+describe('/api/options', () => {
+  it('lists the commentary languages the channel detector can tag, without English', async () => {
+    const res = await fetch(`${base}/api/options`);
+    const { languages } = await res.json();
+    expect(languages).toContain('Spanish');
+    expect(languages).not.toContain('English');
+    expect([...languages].sort()).toEqual(languages);
+  });
+});
+
+describe('SSRF guard on byte proxies', () => {
+  it('/img returns the placeholder without fetching a url the guard refuses', async () => {
+    guardSpy.mockImplementation(async () => ({ ok: false, reason: 'blocked_address', detail: '127.0.0.1 (loopback)' }));
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await fetch(`${base}/img?url=${encodeURIComponent('http://127.0.0.1/')}&text=Blocked`);
+    warn.mockRestore();
+    expect(res.headers.get('content-type')).toContain('image/svg+xml');
+    expect(await res.text()).toContain('Blocked');
+  });
+
+  it('/api/proxy-embed answers 403 when an allowlisted host resolves internally', async () => {
+    guardSpy.mockImplementation(async () => ({ ok: false, reason: 'blocked_address', detail: '10.0.0.7 (private)' }));
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchSpy = spyOn(globalThis, 'fetch');
+    const res = await realFetch(`${base}/api/proxy-embed?url=${encodeURIComponent('https://embed.st/live/1')}`);
+    const upstreamCalls = fetchSpy.mock.calls.filter((c) => String(c[0]).includes('embed.st'));
+    fetchSpy.mockRestore();
+    warn.mockRestore();
+    expect(res.status).toBe(403);
+    expect((await res.json()).reason).toBe('blocked_address');
+    expect(upstreamCalls).toHaveLength(0);
+  });
+
+  it('/api/proxy-embed re-checks a redirect hop before following it', async () => {
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (url) => (
+      String(url).startsWith('https://embed.st')
+        ? new Response('', { status: 302, headers: { location: 'http://169.254.169.254/latest/' } })
+        : realFetch(url)
+    ));
+    guardSpy.mockImplementation(async (url) => (
+      url.includes('169.254')
+        ? { ok: false, reason: 'blocked_address', detail: '169.254.169.254 (link-local)' }
+        : { ok: true, url }
+    ));
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await realFetch(`${base}/api/proxy-embed?url=${encodeURIComponent('https://embed.st/live/1')}`);
+    fetchSpy.mockRestore();
+    warn.mockRestore();
+    expect(res.status).toBe(403);
   });
 });

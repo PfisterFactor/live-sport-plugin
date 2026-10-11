@@ -8,7 +8,7 @@ class TimStreamsProvider extends BaseProvider {
   constructor(opts) {
     super(opts);
     this.name = 'TimStreams';
-    this.apiUrl = 'https://timst.cfd/api/live-upcoming';
+    this.apiUrl = 'https://timst.top/api/live-upcoming';
     
     this.fetchData = this.circuitBreaker.wrap(`${this.name}_fetch`, async () => {
       const res = await this.proxyFetch(this.apiUrl, { timeoutMs: 15000 });
@@ -128,7 +128,7 @@ class TimStreamsProvider extends BaseProvider {
   async extractM3u8(embedUrl) {
     try {
       const res = await this.proxyFetch(embedUrl, {
-        headers: { 'User-Agent': DEFAULT_UA, 'Referer': 'https://timst.cfd/' },
+        headers: { 'User-Agent': DEFAULT_UA, 'Referer': 'https://timst.top/' },
         timeoutMs: 10000
       });
 

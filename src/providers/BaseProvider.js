@@ -64,12 +64,15 @@ class BaseProvider {
     }
     cat = String(cat).toLowerCase().replace(/[^a-z0-9]/g, '');
     if (cat.includes('ncaa') || cat.includes('college')) return 'college';
-    if (cat.includes('americanfootball') || cat.includes('nfl') || cat.includes('afl') || cat.includes('gridiron')) return 'american_football';
+    if (cat.includes('americanfootball') || cat.includes('nfl') || cat.includes('afl') || cat.includes('gridiron') || cat.includes('aussierules')) return 'american_football';
     if (cat.includes('soccer') || cat.includes('football')) return 'football';
-    if (cat.includes('motor') || cat.includes('racing') || cat.includes('cycling') || cat.includes('f1') || cat.includes('formula') || cat.includes('nascar') || cat.includes('indycar')) return 'motorsport';
-    if (cat.includes('fight') || cat.includes('mma') || cat.includes('boxing') || cat.includes('wrestling') || cat.includes('knuckle') || cat.includes('ufc')) return 'mma';
+    // Caught before the generic checks: 'Mixed Martial Arts' normalizes to
+    // 'mixedmartialarts', which matches no catalog id and would hide the event.
+    if (cat.includes('mixedmartialart') || cat.includes('martialart') || cat.includes('mmaglobal')) return 'mma';
+    if (cat.includes('motor') || cat.includes('racing') || cat.includes('cycling') || cat.includes('f1') || cat.includes('formula') || cat.includes('motogp') || cat.includes('moto') || cat.includes('nascar') || cat.includes('indycar')) return 'motorsport';
+    if (cat.includes('fight') || cat.includes('combat') || cat.includes('mma') || cat.includes('boxing') || cat.includes('wrestling') || cat.includes('knuckle') || cat.includes('ufc')) return 'mma';
     if (cat.includes('basketball') || cat.includes('nba')) return 'basketball';
-    if (cat.includes('golf')) return 'golf';
+    if (cat.includes('pga') || cat.includes('golf')) return 'golf';
     if (cat.includes('rugby')) return 'rugby';
     if (cat.includes('cricket')) return 'cricket';
     if (cat.includes('tennis')) return 'tennis';
@@ -77,6 +80,7 @@ class BaseProvider {
     if (cat.includes('baseball') || cat.includes('mlb')) return 'baseball';
     if (cat.includes('darts')) return 'darts';
     if (cat.includes('liveshow') || cat.includes('uncategorized')) return 'other';
+
     return cat;
   }
 
@@ -97,7 +101,7 @@ class BaseProvider {
     if (/baseball|mlb/.test(c)) return 'baseball';
     if (/hockey|nhl|khl/.test(c)) return 'hockey';
     if (/motor|racing|f1|formula|nascar|moto\s*gp|cycling/.test(c)) return 'motorsport';
-    if (/fight|mma|boxing|wrestling|ufc|wwe/.test(c)) return 'mma';
+    if (/fight|combat|mma|boxing|wrestling|ufc|wwe/.test(c)) return 'mma';
     if (/aussie|australian\s*football/.test(c)) return 'rugby';
     if (/rugby|nrl/.test(c)) return 'rugby';
     if (/soccer|football|futsal|la\s*liga|brasileir|serie\s*a|bundesliga|ligue\s*1|eredivisie|champions\s*league|europa\s*league|liga\s*mx|mls|fa\s*cup|copa\s*libertadores|copa\s*america|world\s*cup|nations\s*league|league\s*one|usl|nwsl|championship/.test(c)) return 'football';

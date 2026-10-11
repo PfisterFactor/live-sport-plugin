@@ -8,6 +8,10 @@ spyOn(require('undici'), 'request').mockImplementation(async (url, opts) => {
   return responder(url, opts);
 });
 
+const guard = require('../../../src/services/OutboundUrlGuard');
+let guardVerdict = (url) => ({ ok: true, url });
+spyOn(guard, 'checkOutboundUrl').mockImplementation(async (url) => guardVerdict(url));
+
 const imageService = require('../../../src/services/ImageService');
 const { getImage, normalizeUrl, proxyUrl, placeholderUrl, svgPlaceholder } = imageService;
 
@@ -32,7 +36,7 @@ const at = (ms) => setSystemTime(new Date(T0.getTime() + ms));
 let seq = 0;
 const uniqueUrl = () => `https://cdn.test/${Date.now()}-${seq++}.png`;
 
-beforeEach(() => { requestCalls = []; at(0); });
+beforeEach(() => { requestCalls = []; guardVerdict = (url) => ({ ok: true, url }); at(0); });
 afterEach(() => setSystemTime());
 
 describe('ImageService.normalizeUrl', () => {
@@ -151,14 +155,15 @@ describe('ImageService.getImage', () => {
     responder = () => ({ statusCode: 200, headers: { 'content-type': 'text/html' }, body: body([Buffer.from('<html>')]) });
 
     expect(await getImage(url)).toBeNull();
+    expect(requestCalls).toHaveLength(2);
     at(30 * 1000);
     expect(await getImage(url)).toBeNull();
-    expect(requestCalls).toHaveLength(1);
+    expect(requestCalls).toHaveLength(2);
 
     at(61 * 1000);
     responder = ok();
     expect(await getImage(url)).not.toBeNull();
-    expect(requestCalls).toHaveLength(2);
+    expect(requestCalls).toHaveLength(3);
   });
 
   it('returns null for a non-200 response', async () => {
@@ -171,6 +176,25 @@ describe('ImageService.getImage', () => {
     expect(await getImage(uniqueUrl())).toBeNull();
   });
 
+  it('retries once after a transient failure and serves the second answer', async () => {
+    let calls = 0;
+    responder = () => {
+      if (calls++ === 0) throw new Error('ECONNRESET');
+      return ok(png(80))();
+    };
+    const entry = await getImage(uniqueUrl());
+    expect(entry.buffer).toHaveLength(80);
+    expect(requestCalls).toHaveLength(2);
+  });
+
+  it('never contacts a url the SSRF guard refuses', async () => {
+    guardVerdict = () => ({ ok: false, reason: 'blocked_address', detail: '127.0.0.1 (loopback)' });
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await getImage(uniqueUrl())).toBeNull();
+    expect(requestCalls).toHaveLength(0);
+    warn.mockRestore();
+  });
+
   it('rejects a suspiciously tiny body', async () => {
     responder = ok(Buffer.alloc(31, 1));
     expect(await getImage(uniqueUrl())).toBeNull();
@@ -181,7 +205,7 @@ describe('ImageService.getImage', () => {
     responder = () => ({
       statusCode: 200,
       headers: { 'content-type': 'image/png' },
-      body: body([Buffer.alloc(1024 * 1024, 1), Buffer.alloc(1024 * 1024, 1), Buffer.alloc(1024 * 1024, 1)], { destroyed })
+      body: body([...Array.from({ length: 6 }, () => Buffer.alloc(1024 * 1024, 1))], { destroyed })
     });
     expect(await getImage(uniqueUrl())).toBeNull();
     expect(destroyed.value).toBe(true);

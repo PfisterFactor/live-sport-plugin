@@ -16,6 +16,9 @@ const container = require('../container');
 /** Minimum gap between embed scrapes for one stream, so a dead stream is not hammered. */
 const MIN_RENEW_INTERVAL_MS = 5000;
 
+/** Remembered URLs older than this belong to events that are long over. */
+const MAX_ENTRY_AGE_MS = 12 * 60 * 60 * 1000;
+
 /**
  * Sources that can re-mint a signed manifest URL.
  * Each renewer takes the embed page URL plus the dead URL and returns
@@ -73,6 +76,7 @@ function forget(source, embedUrl, baseUrl) {
  */
 async function renew(source, embedUrl, baseUrl) {
   if (!isRenewable(source)) return null;
+  sweepExpired();
   const key = cacheKey(source, embedUrl, baseUrl);
 
   const pending = inFlight.get(key);
@@ -99,6 +103,14 @@ async function renew(source, embedUrl, baseUrl) {
 
   inFlight.set(key, task);
   return await task;
+}
+
+/** Drops remembered URLs old enough that no player can still be using them. */
+function sweepExpired() {
+  const cutoff = Date.now() - MAX_ENTRY_AGE_MS;
+  for (const [key, entry] of current) {
+    if (entry.mintedAt < cutoff && !inFlight.has(key)) current.delete(key);
+  }
 }
 
 /** Drops all remembered URLs. Test-only. */

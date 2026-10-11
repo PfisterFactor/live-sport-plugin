@@ -159,6 +159,16 @@ describe('MatchAggregator.syncMatches', () => {
     expect(m.team2.name).toBe('Chelsea');
   });
 
+  it('takes the live status from a later provider when the first one sent none', async () => {
+    const agg = build([
+      provider([match({ id: 'a1', title: 'Philadelphia 76ers @ Boston Celtics', category: 'basketball', status: '' })]),
+      provider([match({ id: 'b1', title: 'Boston Celtics vs Philadelphia 76ers', category: 'basketball', status: 'live' })]),
+      provider([match({ id: 'c1', title: 'Boston Celtics vs Philadelphia 76ers', category: 'basketball', status: 'upcoming' })]),
+    ]);
+    const [m] = await agg.syncMatches();
+    expect(m.status).toBe('live');
+  });
+
   it('adopts the fixture title when a channel-style listing was seen first', async () => {
     const agg = build([
       provider([match({ id: 'a1', title: 'Real Madrid Live' })]),

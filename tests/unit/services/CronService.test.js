@@ -45,18 +45,19 @@ afterEach(() => {
 });
 
 describe('CronService.start', () => {
-  it('schedules only the match-sync interval when no external URL is configured', () => {
+  it('schedules only the match-sync and prewarm intervals when no external URL is configured', () => {
     new CronService(makeDeps()).start();
-    expect(intervals).toHaveLength(1);
+    expect(intervals).toHaveLength(2);
     expect(intervals[0].ms).toBe(4 * 60 * 60 * 1000);
+    expect(intervals[1].ms).toBe(3 * 60 * 1000);
   });
 
   it('adds a keep-alive interval that pings /health when RENDER_EXTERNAL_URL is set', async () => {
     process.env.RENDER_EXTERNAL_URL = 'https://addon.example';
     new CronService(makeDeps()).start();
 
-    expect(intervals).toHaveLength(2);
-    const keepAlive = intervals[1];
+    expect(intervals).toHaveLength(3);
+    const keepAlive = intervals[2];
     expect(keepAlive.ms).toBe(14 * 60 * 1000);
 
     await keepAlive.fn();
@@ -67,7 +68,7 @@ describe('CronService.start', () => {
     process.env.RENDER_EXTERNAL_URL = 'https://addon.example';
     pingImpl = async () => { throw new Error('ECONNRESET'); };
     new CronService(makeDeps()).start();
-    expect(await intervals[1].fn()).toBeUndefined();
+    expect(await intervals[2].fn()).toBeUndefined();
   });
 
   it('runs an initial sync shortly after boot', async () => {
@@ -186,6 +187,56 @@ describe('CronService.ensureFresh', () => {
   it('is a no-op when no catalog cache is wired up', () => {
     const cron = new CronService({ matchAggregator: {}, streamResolveCache: null, cacheService: null });
     expect(() => cron.ensureFresh()).not.toThrow();
+  });
+});
+
+describe('CronService.prewarmPopular', () => {
+  const streams = require('../../../src/streams');
+  const catalog = require('../../../src/catalog');
+  let prewarm;
+  let liveSpy;
+  let replaySpy;
+
+  const m = (id, extra = {}) => ({ id, category: 'football', sources: [{ source: 'dlive', id: `${id}-s` }], date: 1, ...extra });
+  const cronFor = (matches, cached = []) => new CronService({
+    matchAggregator: {},
+    streamResolveCache: { get: (key) => cached.includes(key) },
+    cacheService: { getMatches: () => matches },
+  });
+
+  beforeEach(() => {
+    prewarm = spyOn(streams, 'prewarmMatch').mockResolvedValue(undefined);
+    liveSpy = spyOn(catalog, 'isMatchLive').mockImplementation((x) => !x.upcoming);
+    replaySpy = spyOn(catalog, 'isReplayMatch').mockImplementation((x) => !!x.replay);
+  });
+  afterEach(() => [prewarm, liveSpy, replaySpy].forEach((s) => s.mockRestore()));
+
+  it('prewarms only live, non-replay, non-network matches that are not already cached', async () => {
+    await cronFor([
+      m('live'), m('upcoming', { upcoming: true }), m('replay', { replay: true }),
+      m('net', { category: 'networks' }), m('warm'), m('nosrc', { sources: [] }),
+    ], ['dlive:warm:warm-s']).prewarmPopular();
+    expect(prewarm.mock.calls.map((c) => c[0].id)).toEqual(['live']);
+  });
+
+  it('puts popular matches first and caps the batch', async () => {
+    const many = Array.from({ length: 20 }, (_, i) => m(`m${i}`, { date: i }));
+    many.push(m('hot', { popular: '1', date: -5 }));
+    await cronFor(many).prewarmPopular();
+    const ids = prewarm.mock.calls.map((c) => c[0].id);
+    expect(ids).toHaveLength(12);
+    expect(ids[0]).toBe('hot');
+  });
+
+  it('never runs two prewarm passes at once', async () => {
+    let release;
+    prewarm.mockImplementation(() => new Promise((r) => { release = r; }));
+    const cron = cronFor([m('a')]);
+    const first = cron.prewarmPopular();
+    await cron.prewarmPopular();
+    expect(prewarm).toHaveBeenCalledTimes(1);
+    release();
+    await first;
   });
 });
 

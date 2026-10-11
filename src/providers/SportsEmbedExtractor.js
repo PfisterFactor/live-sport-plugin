@@ -32,12 +32,18 @@ function buildProtoHex(embedUrl) {
     ]).toString('hex');
 }
 
+const wasmPath = path.join(__dirname, 'stream-lock.wasm');
+let wasmModule = null;
+
+/** Compile once; every extraction instantiates its own instance from the cached module. */
+function getWasmModule() {
+    if (!wasmModule) wasmModule = new WebAssembly.Module(fs.readFileSync(wasmPath));
+    return wasmModule;
+}
+
 async function extractSportsEmbed(embedUrl) {
     const protoHex = buildProtoHex(embedUrl);
-    const wasmPath = path.join(__dirname, 'stream-lock.wasm');
-    const wasm = fs.readFileSync(wasmPath);
-    const res = await WebAssembly.instantiate(wasm, {});
-    const exports = res.instance.exports;
+    const exports = new WebAssembly.Instance(getWasmModule(), {}).exports;
     const mem = exports.memory;
     
     function getMem() { return new Uint8Array(mem.buffer); }

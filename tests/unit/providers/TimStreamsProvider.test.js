@@ -118,7 +118,7 @@ describe('TimStreamsProvider.extractM3u8', () => {
       m3u8: 'https://edge.ts/live/a.m3u8?t=9',
       referer: 'https://logic.icelanders.st',
     });
-    expect(p._calls[0].opts.headers.Referer).toBe('https://timst.cfd/');
+    expect(p._calls[0].opts.headers.Referer).toBe('https://timst.top/');
   });
 
   it('returns null on a non-2xx page, an undecodable page and a payload without an m3u8', async () => {

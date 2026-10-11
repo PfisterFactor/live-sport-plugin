@@ -14,14 +14,21 @@ const os = require('os');
 
 function getLocalIp() {
   try {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-      for (const iface of interfaces[name]) {
-        if (iface.family === 'IPv4' && !iface.internal) {
+    const candidates = [];
+    for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+      const isVirtual = /warp|wsl|vethernet|virtual|vmware|loopback/i.test(name);
+      for (const iface of addrs) {
+        if (iface.family !== 'IPv4' || iface.internal) continue;
+        // A physical Wi-Fi/Ethernet LAN address beats anything else.
+        if (!isVirtual && (iface.address.startsWith('192.168.') || iface.address.startsWith('10.'))) {
           return iface.address;
         }
+        candidates.push({ address: iface.address, isVirtual });
       }
     }
+    const physical = candidates.find(c => !c.isVirtual);
+    if (physical) return physical.address;
+    if (candidates.length > 0) return candidates[0].address;
   } catch (_) {}
   return '127.0.0.1';
 }
@@ -54,6 +61,7 @@ function getRequestBaseUrl(req) {
   }
 
   if (host) {
+    if (host.startsWith('localhost') || host.startsWith('127.0.0.1')) return BASE_URL;
     return `${proto}://${host}`.replace(/\/$/, '');
   }
 

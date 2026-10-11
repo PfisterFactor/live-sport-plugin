@@ -97,6 +97,8 @@ class StreamedPkProvider extends BaseProvider {
             continue;
           }
 
+          // 24/7 channels are network streams, not fixtures; tagging them with a
+          // sport would flood that sport's Live row with non-events.
           const status = is247Channel ? '' : (isGenuinelyLive ? 'live' : 'upcoming');
 
           // Map sources
@@ -114,19 +116,14 @@ class StreamedPkProvider extends BaseProvider {
             });
           }
 
-          const posterUrl = item.poster ? (
-            item.poster.startsWith('//') ? `https:${item.poster}` :
-            item.poster.startsWith('http') ? item.poster :
-            item.poster.startsWith('/') ? `https://streamed.pk${item.poster}` :
-            `https://streamed.pk/${item.poster}`
-          ) : '';
+          const posterUrl = item.poster ? new URL(item.poster, 'https://streamed.pk').toString() : '';
           const homeBadge = item.teams && item.teams.home && item.teams.home.badge ? `https://streamed.pk/api/images/proxy/${item.teams.home.badge}` : '';
           const awayBadge = item.teams && item.teams.away && item.teams.away.badge ? `https://streamed.pk/api/images/proxy/${item.teams.away.badge}` : '';
 
           matches.push(new MatchEntity({
             id: `spk_${item.id}`,
             title: item.title,
-            category: is247Channel && (String(item.id).includes('channel') || String(item.id).includes('network') || String(item.id).includes('tv') || Number(item.date) <= 0) ? (item.category === 'cricket' ? 'cricket' : (item.category === 'tennis' ? 'tennis' : (item.category === 'rugby' ? 'rugby' : this.normalizeCategory(item.category)))) : this.normalizeCategory(item.category),
+            category: is247Channel ? 'networks' : this.normalizeCategory(item.category),
             status: status,
             date: is247Channel ? '' : String(item.date || Date.now()),
             popular: is247Channel ? '1' : (item.popular ? '1' : '0'),

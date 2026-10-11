@@ -1,4 +1,8 @@
-const TIMEOUT_MS = 20000;
+/**
+ * Per-call budget for every wrapped operation. Exported so callers that set an
+ * inner timeout can stay safely BELOW it instead of being cut short.
+ */
+const BREAKER_TIMEOUT_MS = 20000;
 const RESET_TIMEOUT_MS = 5 * 60 * 1000;
 const ROLLING_WINDOW_MS = 10000;
 const ERROR_THRESHOLD_PCT = 50;
@@ -46,7 +50,7 @@ class CircuitBreaker {
   _withTimeout(promise) {
     let timer;
     const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`Timed out after ${TIMEOUT_MS}ms`)), TIMEOUT_MS);
+      timer = setTimeout(() => reject(new Error(`Timed out after ${BREAKER_TIMEOUT_MS}ms`)), BREAKER_TIMEOUT_MS);
     });
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
   }
@@ -97,3 +101,4 @@ class CircuitBreakerService {
 }
 
 module.exports = CircuitBreakerService;
+module.exports.BREAKER_TIMEOUT_MS = BREAKER_TIMEOUT_MS;

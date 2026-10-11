@@ -4,6 +4,7 @@ const impitClient = require('../../../src/impitClient');
 const { parseSafeTargetUrl } = require('../../../src/routes/manifestProxy');
 const app = require('../../../src/app');
 const container = require('../../../src/container');
+const guard = require('../../../src/services/OutboundUrlGuard');
 const renewal = require('../../../src/services/StreamRenewal');
 
 let server;
@@ -107,6 +108,26 @@ describe('GET /api/manifest', () => {
       expect(await res.text()).toBe('Invalid url');
     }
     expect(calls).toHaveLength(0);
+  });
+
+  it('hands safeFetch a DNS-aware validator so every redirect hop is vetted', async () => {
+    const assertSpy = spyOn(guard, 'assertOutboundUrl').mockResolvedValue({ ok: true });
+    await proxy(freshUrl());
+    const { validateUrl } = calls[0].opts;
+    await validateUrl('http://hop.example.com/x');
+    expect(assertSpy).toHaveBeenCalledWith('http://hop.example.com/x');
+    assertSpy.mockRestore();
+  });
+
+  it('answers 403 and does not negative-cache when the guard blocks the fetch', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    safeFetchSpy.mockImplementation(async () => {
+      throw Object.assign(new Error('Blocked outbound URL (blocked_address): 10.0.0.7 (private)'), { blocked: true });
+    });
+    const res = await proxy(freshUrl());
+    warn.mockRestore();
+    expect(res.status).toBe(403);
+    expect(await res.text()).toBe('Blocked outbound URL');
   });
 
   it('rewrites media segment URIs to absolute and inherits manifest query params', async () => {

@@ -1,4 +1,4 @@
-const { describe, it, expect } = require('bun:test');
+const { describe, it, expect, beforeEach, afterEach, setSystemTime } = require('bun:test');
 const PpvProvider = require('../../../src/providers/PpvProvider');
 const ZliveProvider = require('../../../src/providers/ZliveProvider');
 const DliveProvider = require('../../../src/providers/DliveProvider');
@@ -136,9 +136,13 @@ describe('DliveProvider schedule parsing', () => {
     </section></body></html>`;
   }
 
+  beforeEach(() => setSystemTime(new Date('2026-09-20T10:30:00Z')));
+  afterEach(() => setSystemTime());
+
   function makeProvider() {
     const p = new DliveProvider(makeCradle());
     p.fetchSchedule = { fire: async () => scheduleHtml() };
+    p.fetchChannels = { fire: async () => null };
     return p;
   }
 

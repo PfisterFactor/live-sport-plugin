@@ -3,6 +3,76 @@ const { getChannelLogo } = require('./services/ChannelLogoService');
 const streams = require('./streams');
 const { BASE_URL } = require('./config');
 const imageService = require('./services/ImageService');
+const { parseTimezone } = require('./timezone');
+const { getMatchTier } = require('./services/MainstreamRankingService');
+const { extractTeamsFromTitle } = require('./services/TeamNameExtractor');
+const { filterReplayMatches, isReplayFilterDisabled } = require('./services/ReplayFilterService');
+
+// Sources whose matches qualify as replays.
+const REPLAY_SOURCES = new Set(['replayzone', 'livetv']);
+
+const REPLAY_SPORT_IDS = ['football', 'motorsport', 'baseball', 'rugby', 'basketball', 'tennis', 'hockey', 'american_football'];
+
+const GENRE_TO_CATEGORY = {
+  'football': 'football',
+  'soccer': 'football',
+  'cricket': 'cricket',
+  'basketball': 'basketball',
+  'motorsport': 'motorsport',
+  'f1 & motor': 'motorsport',
+  'formula 1': 'motorsport',
+  'tennis': 'tennis',
+  'baseball': 'baseball',
+  'hockey': 'hockey',
+  'rugby': 'rugby',
+  'american football': 'american_football',
+  'mma': 'mma',
+  'golf': 'golf',
+  'darts': 'darts',
+  'college': 'college',
+  'other': 'other'
+};
+
+/**
+ * Parses a stored kickoff into epoch milliseconds, 0 when there is none.
+ * "0"/"00" are the "no kickoff" sentinel for 24/7 channels and must never reach
+ * a date parser, which would read them as a year in the host zone.
+ */
+function getKickoff(d) {
+  if (!d) return 0;
+  const n = Number(d);
+  if (Number.isFinite(n) && n > 0) return n;
+  const s = String(d).trim();
+  if (!s || /^0+$/.test(s)) return 0;
+  const parsed = parseTimezone(s, 'UTC');
+  return parsed && parsed > 0 ? parsed : 0;
+}
+
+// How long an event can plausibly still be running after kickoff. Providers
+// cache status at fetch time, so elapsed time against these windows is what
+// separates a live fixture from a finished one.
+const SPORT_MAX_DURATION_MS = {
+  cricket: 8 * 60 * 60 * 1000,
+  mma: 6 * 60 * 60 * 1000,
+  fighting: 6 * 60 * 60 * 1000,
+  boxing: 5 * 60 * 60 * 1000,
+  motorsport: 4 * 60 * 60 * 1000,
+  american_football: 4 * 60 * 60 * 1000,
+  baseball: 3.5 * 60 * 60 * 1000,
+  basketball: 3 * 60 * 60 * 1000,
+  tennis: 4 * 60 * 60 * 1000,
+  golf: 6 * 60 * 60 * 1000,
+  football: 2.5 * 60 * 60 * 1000,
+  rugby: 2.5 * 60 * 60 * 1000,
+  hockey: 3 * 60 * 60 * 1000,
+  darts: 4 * 60 * 60 * 1000,
+  college: 4 * 60 * 60 * 1000
+};
+const DEFAULT_EVENT_DURATION_MS = 3 * 60 * 60 * 1000;
+
+function getEventDurationMs(category) {
+  return SPORT_MAX_DURATION_MS[category] || DEFAULT_EVENT_DURATION_MS;
+}
 
 /**
  * Accurately determines if an event is currently live right now.
@@ -31,36 +101,130 @@ function isMatchLive(match) {
 
   // 4. Time-based evaluation when status is not explicitly set
   const now = Date.now();
-  const kickoff = match.date ? parseInt(match.date, 10) : 0;
+  const kickoff = getKickoff(match.date);
 
   if (kickoff > 0) {
-    // If kickoff is more than 15 minutes in the future, it's definitely UPCOMING, not live
-    if (kickoff > now + 15 * 60 * 1000) {
-      return false;
-    }
-
-    const durations = {
-      cricket: 8 * 60 * 60 * 1000,
-      mma: 6 * 60 * 60 * 1000,
-      fighting: 6 * 60 * 60 * 1000,
-      boxing: 5 * 60 * 60 * 1000,
-      motorsport: 4 * 60 * 60 * 1000,
-      american_football: 4 * 60 * 60 * 1000,
-      baseball: 3.5 * 60 * 60 * 1000,
-      basketball: 3 * 60 * 60 * 1000,
-      tennis: 4 * 60 * 60 * 1000,
-      golf: 6 * 60 * 60 * 1000,
-      football: 2.5 * 60 * 60 * 1000,
-      rugby: 2.5 * 60 * 60 * 1000,
-      hockey: 3 * 60 * 60 * 1000,
-      darts: 4 * 60 * 60 * 1000
-    };
-    const maxDuration = durations[match.category] || (3 * 60 * 60 * 1000);
-
-    return now >= (kickoff - 15 * 60 * 1000) && now <= (kickoff + maxDuration);
+    return now >= (kickoff - 15 * 60 * 1000) && now <= (kickoff + getEventDurationMs(match.category));
   }
 
   return false;
+}
+
+/**
+ * Determines whether a match is a replay (a past event whose coverage is still
+ * available) rather than a live or upcoming fixture. 24/7 networks are never
+ * replays, and the match must carry a source from a replay-capable provider.
+ */
+function isReplayMatch(match) {
+  if (!match) return false;
+  if (match.category === 'networks') return false;
+  if (match.status === 'postponed' || match.status === 'cancelled') return false;
+
+  if (match.sources && match.sources.length > 0) {
+    if (!match.sources.some(s => s && REPLAY_SOURCES.has(s.source))) return false;
+  }
+
+  const kickoff = match.date ? getKickoff(match.date) : 0;
+
+  // Without a usable kickoff time, only an explicit terminal status qualifies.
+  if (kickoff === 0) {
+    return match.status === 'finished' || match.status === 'ended';
+  }
+
+  // An explicit terminal status is authoritative.
+  if (match.status === 'finished' || match.status === 'ended') {
+    return kickoff <= Date.now();
+  }
+
+  return Date.now() > kickoff + getEventDurationMs(match.category);
+}
+
+/**
+ * Lowercases and strips diacritics so "Nautico" matches "Náutico".
+ * Applied to both the query and the title.
+ */
+function foldText(value) {
+  return String(value == null ? '' : value)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+/**
+ * Normalizes the "Favorite teams" config field into folded phrases with their
+ * tokens. A multi-word favourite only matches when every token is found, so
+ * "man united" cannot be satisfied by "Manchester City".
+ */
+function parseFavoriteTeams(conf) {
+  const raw = conf && conf.teams;
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  return raw.split(',')
+    .map(t => foldText(t.trim()))
+    .filter(Boolean)
+    .map(phrase => ({ phrase, tokens: phrase.split(/\s+/).filter(Boolean) }));
+}
+
+/**
+ * True when the match title mentions any favourite team. Tokens match on word
+ * boundaries with prefix semantics, so "atletico" finds "Atlético Goianiense"
+ * while "real" does not match "Montreal Canadiens".
+ */
+function isFavoriteMatch(match, favorites) {
+  if (!favorites || favorites.length === 0) return false;
+  const title = foldText(match && match.title);
+  if (!title) return false;
+
+  const titleTokens = title.split(/[^a-z0-9]+/).filter(Boolean);
+  if (titleTokens.length === 0) return false;
+
+  return favorites.some(fav =>
+    fav.tokens.length > 0 &&
+    fav.tokens.every(ft => titleTokens.some(tt => tt.startsWith(ft)))
+  );
+}
+
+/**
+ * Ordering for the Live Now / Upcoming / per-sport / replay catalogs. Key order,
+ * highest priority first:
+ *   1. live before not-live
+ *   2. real fixtures before 24/7 channels
+ *   3. mainstream before local / lower-division (getMatchTier)
+ *   4. popular before non-popular
+ *   5. date: upcoming nearest kickoff first; live and replays newest first
+ * Favourite teams deliberately do not reorder catalogs; they only drive the
+ * Your Teams catalog.
+ */
+function compareCatalogMatches(a, b, isReplayMode = false) {
+  const aIsLive = isMatchLive(a) ? 1 : 0;
+  const bIsLive = isMatchLive(b) ? 1 : 0;
+  if (aIsLive !== bIsLive) return bIsLive - aIsLive;
+
+  // A 24/7 network is always live, so it would otherwise flood the top of the
+  // list. Real fixtures carry a kickoff, team names, or a "vs"/"@" title.
+  const isRealFixture = (m) => (m.category !== 'networks' && (!!m.date || !!m.team1 || !!m.team2 || /( vs | @ )/.test(m.title || ''))) ? 1 : 0;
+  const aFix = isRealFixture(a);
+  const bFix = isRealFixture(b);
+  if (aFix !== bFix) return bFix - aFix;
+
+  // `popular` cannot separate a top-flight tie from a second-division one
+  // (Streamed.pk flags most of its events popular), so rank by tier first.
+  const aTier = getMatchTier(a);
+  const bTier = getMatchTier(b);
+  if (aTier !== bTier) return aTier - bTier;
+
+  const aPop = a.popular === '1' ? 1 : 0;
+  const bPop = b.popular === '1' ? 1 : 0;
+  if (aPop !== bPop) return bPop - aPop;
+
+  const dateA = a.date ? getKickoff(a.date) : 0;
+  const dateB = b.date ? getKickoff(b.date) : 0;
+
+  if (dateA > 0 && dateB > 0) {
+    return (isReplayMode || aIsLive) ? dateB - dateA : dateA - dateB;
+  }
+  if (dateA > 0) return -1;
+  if (dateB > 0) return 1;
+  return 0;
 }
 
 function normalizeImageUrl(url, defaultHost = 'https://streamfree.top') {
@@ -93,8 +257,35 @@ function kickoffFormatter(timeZone) {
   return formatter;
 }
 
+const dateFormatters = new Map();
+
+/** "Sep 14, 2026" formatter for `timeZone`, falling back to UTC when invalid. */
+function dateFormatter(timeZone) {
+  const key = timeZone || '';
+  let formatter = dateFormatters.get(key);
+  if (formatter) return formatter;
+  const options = { month: 'short', day: 'numeric', year: 'numeric', timeZone: timeZone || 'UTC' };
+  try {
+    formatter = new Intl.DateTimeFormat('en-US', options);
+  } catch (e) {
+    formatter = new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' });
+  }
+  dateFormatters.set(key, formatter);
+  return formatter;
+}
+
+/** Strips emoji and flag glyphs some providers embed in team names. */
+function cleanTeamName(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{E0020}-\u{E007F}\u{1F3F4}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function mapMatchToMetaPreview(match, config = {}) {
   const isLive = isMatchLive(match);
+  const isReplay = !isLive && isReplayMatch(match);
   const titleStr = match.title || (isLive ? 'Live Match' : 'Upcoming Match');
   
   // Dynamic Sport-Specific Posters
@@ -118,18 +309,27 @@ function mapMatchToMetaPreview(match, config = {}) {
   
   // Channel logos come from the unified ChannelLogoService (tv-logos CDN + Wikimedia).
 
+  // Competitor names, filled from the title when the provider omitted them.
+  const derivedTeams = extractTeamsFromTitle(match.title);
+  const team1Name = cleanTeamName((match.team1 && match.team1.name) || (derivedTeams && derivedTeams[0]));
+  const team2Name = cleanTeamName((match.team2 && match.team2.name) || (derivedTeams && derivedTeams[1]));
+
   // Generate a clean, readable fallback poster using the match title
   let posterText = titleStr;
-  if (match.team1 && match.team2 && match.team1.name && match.team2.name) {
-      posterText = `${match.team1.name}\nvs\n${match.team2.name}`;
+  if (team1Name && team2Name) {
+      posterText = `${team1Name}\nvs\n${team2Name}`;
+  } else if (isReplay) {
+      // Replay titles are session titles ("A @ B - League - Full Game Replay -
+      // September 14, 2026"), so lead the card with the part before the first dash.
+      posterText = posterText.replace(/ [-\u2013\u2014] /, '\n-\n');
   } else {
       posterText = posterText.replace(/ vs /i, '\nvs\n').replace(/ - /i, '\n-\n');
   }
-  
+
   if (posterText.length > 50) {
       posterText = match.category.toUpperCase();
   }
-  
+
   // Self-hosted fallback poster (replaces the external placehold.co dependency)
   const fallbackPoster = imageService.placeholderUrl(BASE_URL, posterText, color);
 
@@ -172,18 +372,20 @@ function mapMatchToMetaPreview(match, config = {}) {
   let background = matchBackground ? (buildImg(matchBackground, posterText, color) || poster) : poster;
 
   let timeString = match.category === 'networks' ? '24/7 Stream' : 'Live Now';
+  let dateString = '';
   let relativeTimeStr = '';
   let releasedIso = null;
-  
-  if (match.date && !isNaN(parseInt(match.date)) && parseInt(match.date) > 0) {
-     const dateObj = new Date(parseInt(match.date));
+  const timeZone = config && config.timezone ? config.timezone : null;
+
+  const kickoff = match.date ? getKickoff(match.date) : 0;
+  if (kickoff > 0) {
+     const dateObj = new Date(kickoff);
      releasedIso = dateObj.toISOString();
-     const timeZone = config && config.timezone ? config.timezone : null;
 
      timeString = kickoffFormatter(timeZone).format(dateObj) + (timeZone ? ` (${timeZone})` : '');
-     
-     const now = Date.now();
-     const diff = dateObj.getTime() - now;
+     dateString = dateFormatter(timeZone).format(dateObj);
+
+     const diff = dateObj.getTime() - Date.now();
      if (diff > 0 && !isLive) {
        const hours = Math.floor(diff / (1000 * 60 * 60));
        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -197,17 +399,26 @@ function mapMatchToMetaPreview(match, config = {}) {
      }
   }
 
-  const is247 = match.category === 'networks' || !match.date;
-  const prefix = isLive ? (is247 ? '📺 ' : '🔴 LIVE: ') : '⏱️ ';
+  const is247 = !isReplay && (match.category === 'networks' || !match.date);
+  const prefix = isReplay ? '⏪ ' : (isLive ? (is247 ? '📺 ' : '🔴 LIVE: ') : '⏱️ ');
   const cast = [];
-  if (match.team1 && match.team1.name) cast.push(match.team1.name);
-  if (match.team2 && match.team2.name) cast.push(match.team2.name);
+  if (team1Name) cast.push(team1Name);
+  if (team2Name) cast.push(team2Name);
+
+  const replayReleaseInfo = dateString || 'Replay';
+  const scoreSuffix = match.score ? ` (${match.score})` : '';
 
   const leagueStr = match.league ? `🏆 League: ${match.league}\n` : '';
-  const statusStr = is247 
-    ? '24/7 Live Network' 
-    : (isLive ? '🔴 LIVE NOW' : `Kickoff at ${timeString}${relativeTimeStr}`);
+  let statusStr;
+  if (is247) statusStr = '24/7 Live Network';
+  else if (isLive) statusStr = `🔴 LIVE NOW${scoreSuffix}`;
+  else if (isReplay) statusStr = `⏪ Replay (${replayReleaseInfo})`;
+  else statusStr = `Kickoff at ${timeString}${relativeTimeStr}`;
   const desc = `${leagueStr}📅 Category: ${match.category.toUpperCase()}\n⏰ Status: ${statusStr}`;
+
+  let releaseInfo = timeString;
+  if (isReplay) releaseInfo = replayReleaseInfo;
+  else if (isLive) releaseInfo = is247 ? '24/7' : 'LIVE';
 
   const metaPreview = {
     id: `nuvio_sport_${match.id}`,
@@ -218,7 +429,7 @@ function mapMatchToMetaPreview(match, config = {}) {
     posterShape: 'landscape',
     background: background,
     logo: logo,
-    releaseInfo: isLive ? (is247 ? '24/7' : 'LIVE') : timeString,
+    releaseInfo,
     description: desc,
     cast: cast,
     behaviorHints: {
@@ -241,7 +452,163 @@ const PAGE_SIZE = 100;
 // never exceeds what the server would have served anyway.
 const CATALOG_MAX_AGE = 60;
 
+// Replays are static archive content, so clients may hold them far longer.
+const REPLAY_MAX_AGE = 1800;
+const REPLAY_STALE_REVALIDATE = 3600;
+
+const TOP_LEVEL_CATEGORIES = ['football', 'cricket', 'basketball', 'motorsport', 'hockey', 'baseball', 'mma', 'golf', 'tennis', 'rugby', 'american_football', 'darts', 'networks', 'college'];
+
+/** True when the match belongs on the given sport catalog (including topical 24/7 networks). */
+function matchesSportCatalog(m, sport) {
+  if (m.category === sport) return true;
+  if (m.category !== 'networks') return false;
+  const titleLower = (m.title || '').toLowerCase();
+  switch (sport) {
+    case 'cricket': return titleLower.includes('cricket');
+    case 'tennis': return titleLower.includes('tennis');
+    case 'motorsport': return titleLower.includes('f1') || titleLower.includes('racing') || titleLower.includes('moto') || titleLower.includes('motorsport');
+    case 'basketball': return titleLower.includes('nba') || titleLower.includes('basketball');
+    case 'football': return titleLower.includes('football') || titleLower.includes('soccer') || titleLower.includes('golazo') || titleLower.includes('laliga') || titleLower.includes('premier league') || titleLower.includes('bein sports');
+    case 'rugby':
+      if (/premier league|champions league|europa league|la liga|serie a|bundesliga/.test(titleLower)) return false;
+      return /rugby|nrl|super league|six nations|fox league/.test(titleLower);
+    case 'american_football': return titleLower.includes('nfl') || titleLower.includes('american football');
+    case 'baseball': return titleLower.includes('mlb') || titleLower.includes('baseball');
+    case 'hockey': return titleLower.includes('nhl') || titleLower.includes('hockey');
+    case 'golf': return titleLower.includes('golf') || titleLower.includes('pga');
+    default: return false;
+  }
+}
+
+/** Narrows matches to one sport from a genre label such as "American Football" or "Other". */
+function filterByGenre(matches, genre) {
+  if (typeof genre !== 'string' || !genre.trim()) return matches;
+  const wanted = GENRE_TO_CATEGORY[genre.trim().toLowerCase()];
+  if (!wanted) return matches;
+  if (wanted === 'other') return matches.filter(m => !TOP_LEVEL_CATEGORIES.includes(m.category));
+  return matches.filter(m => m.category === wanted);
+}
+
+/** Keeps only the sports named in `config.sports`; 24/7 networks are never sport-bound. */
+function filterBySports(matches, conf) {
+  if (typeof conf.sports !== 'string' || conf.sports === 'all') return matches;
+  const allowedSports = conf.sports.toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+  return matches.filter(m => m.category === 'networks' || allowedSports.includes(m.category));
+}
+
+/** True when the match is a replay served by a replay-capable provider. */
+function isListedReplay(m) {
+  return isReplayMatch(m) &&
+    Array.isArray(m.sources) &&
+    m.sources.some(s => s && REPLAY_SOURCES.has(s.source)) &&
+    !m.sources.some(s => s && s.source === 'timstreams');
+}
+
+/** True when a finished or over-running fixture should not appear as live or upcoming. */
+function isExpiredFixture(m) {
+  if (m.status === 'finished' || m.status === 'ended') return true;
+  const kickoff = m.date ? getKickoff(m.date) : 0;
+  return kickoff > 0 && !isMatchLive(m) && Date.now() > kickoff + getEventDurationMs(m.category);
+}
+
+/** Slices one page and renders it, searching rendered metas when a query is given. */
+function paginateMetas(matches, extra, conf) {
+  const skip = Math.max(0, parseInt(extra && extra.skip, 10) || 0);
+  if (extra && extra.search) {
+    const q = extra.search.toLowerCase();
+    return matches
+      .map(m => mapMatchToMetaPreview(m, conf))
+      .filter(m =>
+        m.name.toLowerCase().includes(q) ||
+        (m.description && m.description.toLowerCase().includes(q)) ||
+        (m.cast && m.cast.some(c => c.toLowerCase().includes(q)))
+      )
+      .slice(skip, skip + PAGE_SIZE);
+  }
+  return matches.slice(skip, skip + PAGE_SIZE).map(m => mapMatchToMetaPreview(m, conf));
+}
+
+/** UTC calendar day (YYYY-MM-DD) of a kickoff, '' when the match has none. */
+function utcDay(match) {
+  const ko = match.date ? getKickoff(match.date) : 0;
+  return ko > 0 ? new Date(ko).toISOString().slice(0, 10) : '';
+}
+
+const REPLAY_LEAGUE_FILTERS = {
+  premier_league: { league: /premier/i, title: /premier\s*league/i },
+  epl: { league: /premier/i, title: /premier\s*league/i },
+  ucl: { league: /champions|europa|conference|uefa/i, title: /champions\s*league|europa\s*league/i },
+  champions_league: { league: /champions|europa|conference|uefa/i, title: /champions\s*league|europa\s*league/i },
+  european: { league: /la\s*liga|serie\s*a|bundesliga|ligue\s*1/i, title: null },
+  f1: { league: /formula\s*1|f1/i, title: /formula\s*1|\bf1\b/i },
+  nba: { league: /nba/i, title: /\bnba\b/i },
+  mlb: { league: /mlb/i, title: /\bmlb\b/i },
+  nfl: { league: /nfl/i, title: /\bnfl\b/i },
+  nhl: { league: /nhl/i, title: /\bnhl\b/i },
+  atp: { league: /atp/i, title: /\batp\b/i },
+  wta: { league: /wta/i, title: /\bwta\b/i }
+};
+
+/**
+ * Applies a replay sub-filter (`today`, `yesterday`, `this_week`, `older`,
+ * `recent`, `date_YYYY-MM-DD`, or a competition key) to replay matches.
+ */
+function applyReplaySubFilter(matches, filterType) {
+  const now = Date.now();
+  const dayMs = 86400000;
+  const kickoffOf = (m) => (m.date ? getKickoff(m.date) : 0);
+
+  const dateMatch = filterType.match(/(?:date_)?(\d{4}-\d{2}-\d{2})/);
+  if (dateMatch) return matches.filter(m => utcDay(m) === dateMatch[1]);
+  if (filterType === 'today') {
+    const today = new Date(now).toISOString().slice(0, 10);
+    return matches.filter(m => utcDay(m) === today);
+  }
+  if (filterType === 'yesterday') {
+    const yesterday = new Date(now - dayMs).toISOString().slice(0, 10);
+    return matches.filter(m => utcDay(m) === yesterday);
+  }
+  if (filterType === 'this_week') {
+    return matches.filter(m => { const ko = kickoffOf(m); return ko <= now - 2 * dayMs && ko >= now - 7 * dayMs; });
+  }
+  if (filterType === 'older') return matches.filter(m => kickoffOf(m) < now - 7 * dayMs);
+  if (filterType === 'recent') {
+    const recent = matches.filter(m => kickoffOf(m) >= now - 14 * dayMs);
+    return recent.length >= 10 ? recent : matches.slice(0, 40);
+  }
+  const rule = REPLAY_LEAGUE_FILTERS[filterType];
+  if (rule) {
+    return matches.filter(m => (m.league && rule.league.test(m.league)) || (rule.title && rule.title.test(m.title)));
+  }
+  return matches;
+}
+
 // ─── Handlers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Serves `nuvio_sports_replays_<sport>[_<filter>]` rows: replay fixtures of one
+ * sport, newest first. Returns nothing when the user disabled replays.
+ */
+async function handleReplayCatalog(id, extra, conf) {
+  if (isReplayFilterDisabled(conf)) return { metas: [] };
+
+  const sub = id.replace('nuvio_sports_replays_', '');
+  const targetSport = REPLAY_SPORT_IDS.find(s => sub === s || sub.startsWith(`${s}_`)) || 'other';
+  const filterType = sub.replace(targetSport, '').replace(/^_/, '');
+
+  const cacheService = container.resolve('cacheService');
+  let matches = (cacheService.getMatches() || []).filter(m => {
+    if (!m || !isListedReplay(m)) return false;
+    return targetSport === 'other' ? !REPLAY_SPORT_IDS.includes(m.category) : m.category === targetSport;
+  });
+
+  matches = filterReplayMatches(matches, conf);
+  matches = applyReplaySubFilter(matches, filterType);
+  matches = [...matches].sort((a, b) => compareCatalogMatches(a, b, true));
+
+  const metas = paginateMetas(matches, extra, conf);
+  return { metas, cacheMaxAge: REPLAY_MAX_AGE, staleRevalidate: REPLAY_STALE_REVALIDATE };
+}
 
 async function handleCatalog(type, id, extra, config) {
   if (type !== 'tv' || !id.startsWith('nuvio_sports_')) {
@@ -251,105 +618,91 @@ async function handleCatalog(type, id, extra, config) {
   // Fire-and-forget stale-while-revalidate: return the cached list now and let
   // CronService refresh it in the background once it passes the revalidate window.
   container.resolve('cronService').ensureFresh();
-  
+
   const conf = config || (extra && extra.config) || {};
 
   const categoryMatch = id.replace('nuvio_sports_', '');
-  
+
+  if (categoryMatch.startsWith('replays_')) {
+    return handleReplayCatalog(id, extra, conf);
+  }
+
+  const isReplayMode = categoryMatch === 'replays' || (extra && extra.genre === 'Replays');
+  if (isReplayMode && isReplayFilterDisabled(conf)) {
+    return { metas: [] };
+  }
+
   // Use CacheService instead of hitting APIs on demand
   const cacheService = container.resolve('cacheService');
   const matches = cacheService.getMatches();
-  
+
   let filteredMatches = matches;
 
   if (categoryMatch === 'live') {
-    filteredMatches = matches.filter(m => isMatchLive(m));
+    if (!isReplayMode) filteredMatches = matches.filter(m => isMatchLive(m));
   } else if (categoryMatch === 'upcoming') {
-    const now = Date.now();
-    filteredMatches = matches.filter(m => !isMatchLive(m) && (parseInt(m.date) || 0) > now);
-  } else if (categoryMatch === 'teams') {
-    if (typeof conf.teams === 'string' && conf.teams.trim()) {
-      const favoriteTeams = conf.teams.toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
-      filteredMatches = matches.filter(m => {
-        const titleWords = m.title.toLowerCase();
-        return favoriteTeams.some(team => titleWords.includes(team));
-      });
-    } else {
-      filteredMatches = []; // If no config, return empty
+    if (!isReplayMode) {
+      const now = Date.now();
+      filteredMatches = matches.filter(m => !isMatchLive(m) && getKickoff(m.date) > now);
     }
+  } else if (categoryMatch === 'teams') {
+    const favoriteTeams = parseFavoriteTeams(conf);
+    filteredMatches = favoriteTeams.length ? matches.filter(m => isFavoriteMatch(m, favoriteTeams)) : [];
   } else if (categoryMatch === 'other') {
-    const topLevelCats = ['football', 'cricket', 'basketball', 'motorsport', 'hockey', 'baseball', 'mma', 'golf', 'tennis', 'rugby', 'american_football', 'darts', 'networks', 'college'];
-    filteredMatches = matches.filter(m => !topLevelCats.includes(m.category));
-  } else if (categoryMatch !== 'catalog') {
-    filteredMatches = matches.filter(m => {
-      if (m.category === categoryMatch) return true;
-      // Also include 24/7 networks specifically matching the sport category
-      if (m.category === 'networks') {
-        const titleLower = m.title.toLowerCase();
-        if (categoryMatch === 'cricket' && titleLower.includes('cricket')) return true;
-        if (categoryMatch === 'tennis' && titleLower.includes('tennis')) return true;
-        if (categoryMatch === 'motorsport' && (titleLower.includes('f1') || titleLower.includes('racing') || titleLower.includes('moto') || titleLower.includes('motorsport'))) return true;
-        if (categoryMatch === 'basketball' && (titleLower.includes('nba') || titleLower.includes('basketball'))) return true;
-        if (categoryMatch === 'football' && (titleLower.includes('football') || titleLower.includes('soccer') || titleLower.includes('golazo') || titleLower.includes('laliga') || titleLower.includes('premier league') || titleLower.includes('bein sports'))) return true;
-        if (categoryMatch === 'rugby' && (titleLower.includes('rugby') || titleLower.includes('league') || titleLower.includes('nrl'))) return true;
-        if (categoryMatch === 'american_football' && (titleLower.includes('nfl') || titleLower.includes('american football'))) return true;
-        if (categoryMatch === 'baseball' && (titleLower.includes('mlb') || titleLower.includes('baseball'))) return true;
-        if (categoryMatch === 'hockey' && (titleLower.includes('nhl') || titleLower.includes('hockey'))) return true;
-        if (categoryMatch === 'golf' && (titleLower.includes('golf') || titleLower.includes('pga'))) return true;
-      }
-      return false;
-    });
+    filteredMatches = matches.filter(m => !TOP_LEVEL_CATEGORIES.includes(m.category));
+  } else if (categoryMatch !== 'catalog' && categoryMatch !== 'replays') {
+    filteredMatches = matches.filter(m => matchesSportCatalog(m, categoryMatch));
   }
 
-  if (typeof conf.sports === 'string' && conf.sports !== 'all') {
-    const allowedSports = conf.sports.toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
-    // Don't filter out networks (24/7 TV) since they aren't tied to a specific sport
-    filteredMatches = filteredMatches.filter(m => m.category === 'networks' || allowedSports.includes(m.category));
+  filteredMatches = filterBySports(filteredMatches, conf);
+  if (extra && extra.genre && (categoryMatch === 'live' || categoryMatch === 'upcoming' || categoryMatch === 'replays')) {
+    filteredMatches = filterByGenre(filteredMatches, extra.genre);
   }
 
-  filteredMatches = [...filteredMatches].sort((a, b) => {
-    const aIsLive = isMatchLive(a) ? 1 : 0;
-    const bIsLive = isMatchLive(b) ? 1 : 0;
-    if (aIsLive !== bIsLive) return bIsLive - aIsLive; // Live matches first
-    
-    // Within live matches: Actual live event fixtures (UFC, F1, Football, etc.) take priority over 24/7 TV channels
-    const aIsEvent = a.category !== 'networks' ? 1 : 0;
-    const bIsEvent = b.category !== 'networks' ? 1 : 0;
-    if (aIsEvent !== bIsEvent) return bIsEvent - aIsEvent;
-
-    // Featured / Popular matches first
-    const aPop = a.popular === '1' ? 1 : 0;
-    const bPop = b.popular === '1' ? 1 : 0;
-    if (aPop !== bPop) return bPop - aPop;
-    
-    const dateA = a.date ? parseInt(a.date) : 0;
-    const dateB = b.date ? parseInt(b.date) : 0;
-    
-    // Sort upcoming by closest kickoff first
-    if (dateA > 0 && dateB > 0) return dateA - dateB;
-    return 0;
+  filteredMatches = filteredMatches.filter(m => {
+    if (isReplayMode) return isListedReplay(m);
+    if (isReplayMatch(m)) return false;
+    return !isExpiredFixture(m);
   });
+
+  if (isReplayMode) filteredMatches = filterReplayMatches(filteredMatches, conf);
+
+  filteredMatches = [...filteredMatches].sort((a, b) => compareCatalogMatches(a, b, isReplayMode));
 
   // Stremio pages catalogs with `skip`; without the slice every page re-sends
   // the entire list. Search has to run on rendered metas, so it maps first.
-  const skip = Math.max(0, parseInt(extra && extra.skip, 10) || 0);
-  let metas;
+  const metas = paginateMetas(filteredMatches, extra, conf);
 
-  if (extra && extra.search) {
-    const q = extra.search.toLowerCase();
-    metas = filteredMatches
-      .map(m => mapMatchToMetaPreview(m, conf))
-      .filter(m =>
-        m.name.toLowerCase().includes(q) ||
-        (m.description && m.description.toLowerCase().includes(q)) ||
-        (m.cast && m.cast.some(c => c.toLowerCase().includes(q)))
-      )
-      .slice(skip, skip + PAGE_SIZE);
-  } else {
-    metas = filteredMatches.slice(skip, skip + PAGE_SIZE).map(m => mapMatchToMetaPreview(m, conf));
+  if (isReplayMode) {
+    return { metas, cacheMaxAge: REPLAY_MAX_AGE, staleRevalidate: REPLAY_STALE_REVALIDATE, staleError: 600 };
   }
-
   return { metas, cacheMaxAge: CATALOG_MAX_AGE, staleRevalidate: 300, staleError: 600 };
+}
+
+/**
+ * Builds the placeholder meta for an id that is no longer cached, so a client
+ * holding a stale link sees an explanation instead of "could not load details".
+ */
+function buildMissingMatchMeta(matchId) {
+  const slug = matchId.replace(/^[a-z0-9]+_[0-9]+_/, '').replace(/[-_]/g, ' ');
+  const title = slug.replace(/\b\w/g, c => c.toUpperCase()) || 'Sports Event';
+  const poster = imageService.placeholderUrl(BASE_URL, title, '333333');
+  return {
+    meta: {
+      id: `nuvio_sport_${matchId}`,
+      type: 'tv',
+      name: `⏱️ ${title}`,
+      genres: ['SPORTS'],
+      posterShape: 'landscape',
+      poster,
+      background: poster,
+      logo: `${BASE_URL}/logo.png`,
+      description: 'This event may have ended or updated in the schedule. Please refresh the catalog or check back shortly.',
+      behaviorHints: { defaultVideoId: `nuvio_sport_${matchId}` }
+    },
+    cacheMaxAge: 60,
+    staleRevalidate: 120
+  };
 }
 
 async function handleMeta(type, id, config) {
@@ -362,11 +715,10 @@ async function handleMeta(type, id, config) {
 
   const matchId = id.replace('nuvio_sport_', '');
   const cacheService = container.resolve('cacheService');
-  const matches = cacheService.getMatches();
-  const match = matches.find(m => m.id === matchId);
+  const match = cacheService.findMatch(matchId);
 
   if (!match) {
-    return { meta: null };
+    return buildMissingMatchMeta(matchId);
   }
 
   // Prewarm: mint tokens for this match's top sources while the user is still
@@ -378,6 +730,15 @@ async function handleMeta(type, id, config) {
 
 module.exports = {
   handleCatalog,
+  handleReplayCatalog,
   handleMeta,
-  isMatchLive
+  isMatchLive,
+  isReplayMatch,
+  mapMatchToMetaPreview,
+  compareCatalogMatches,
+  getKickoff,
+  getEventDurationMs,
+  isFavoriteMatch,
+  parseFavoriteTeams,
+  SPORT_MAX_DURATION_MS
 };

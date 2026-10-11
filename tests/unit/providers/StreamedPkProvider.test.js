@@ -59,14 +59,14 @@ describe('StreamedPkProvider.getMatches', () => {
     expect(matches.map((m) => m.status)).toEqual(['live']);
   });
 
-  it('survives numeric ids on 24/7 channels', async () => {
+  it('survives numeric ids on 24/7 channels and files them under networks', async () => {
     const all = [
       { id: 90210, title: 'Numeric Channel', category: 'tennis', date: 0 },
       { id: 'x1', title: 'Regular', category: 'cricket', date: T + 1000 },
     ];
     const matches = await makeProvider({ all }).getMatches();
     expect(matches.map((m) => m.id)).toEqual(['spk_90210', 'spk_x1']);
-    expect(matches[0].category).toBe('tennis');
+    expect(matches[0].category).toBe('networks');
   });
 
   it('expands sources into per-stream descriptors and synthesises one when absent', async () => {

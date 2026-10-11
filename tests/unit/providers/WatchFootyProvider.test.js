@@ -53,7 +53,7 @@ describe('WatchFootyProvider.getMatches', () => {
     expect(m1.category).toBe('football');
     expect(m1.poster).toBe('https://api.watchfooty.st/img/m1.jpg');
     expect(m1.sources).toEqual([{ source: 'watchfooty', id: 'm1' }]);
-    expect(m2.status).toBe('upcoming');
+    expect(m2.status).toBe('pre');
     expect(m2.title).toBe('Lakers vs Celtics');
     expect(m2.category).toBe('basketball');
   });
@@ -125,7 +125,8 @@ describe('WatchFootyProvider.resolveStream', () => {
     const [s] = await makeProvider({ details, html: '<html>no iframe</html>' }).resolveStream('m1', 'football', 'A vs B');
     expect(s.url).toContain('/api/manifest?url=');
     expect(decodeURIComponent(s.url.split('url=')[1].split('&')[0])).toBe('https://edge.se/live/secret.m3u8');
-    expect(s.behaviorHints).toEqual({ notWebReady: true });
+    expect(s.behaviorHints.notWebReady).toBe(true);
+    expect(s.behaviorHints.proxyHeaders.request.Referer).toBe('https://sportsembed.su/');
   });
 
   it('offers the /watch fallback when native extraction throws', async () => {

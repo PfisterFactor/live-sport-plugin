@@ -3,6 +3,8 @@
 const REVALIDATE_AFTER_MS = parseInt(process.env.CATALOG_REVALIDATE_MS, 10) || 10 * 60 * 1000;
 const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const KEEP_ALIVE_INTERVAL_MS = 14 * 60 * 1000;
+const PREWARM_INTERVAL_MS = parseInt(process.env.PREWARM_INTERVAL_MS, 10) || 3 * 60 * 1000;
+const PREWARM_MAX_MATCHES = parseInt(process.env.PREWARM_MAX_MATCHES, 10) || 12;
 
 class CronService {
   constructor({ matchAggregator, streamResolveCache, cacheService }) {
@@ -10,6 +12,7 @@ class CronService {
     this.streamResolveCache = streamResolveCache;
     this.cacheService = cacheService;
     this.syncing = false;
+    this.prewarming = false;
   }
 
   async runSync() {
@@ -51,6 +54,14 @@ class CronService {
       }
     }, SYNC_INTERVAL_MS).unref();
 
+    setInterval(async () => {
+      try {
+        await this.prewarmPopular();
+      } catch (err) {
+        console.error('[CronService] Prewarm job failed:', err.message);
+      }
+    }, PREWARM_INTERVAL_MS).unref();
+
     const externalUrl = process.env.RENDER_EXTERNAL_URL;
     if (externalUrl) {
       console.log(`[CronService] Keep-alive enabled for ${externalUrl}`);
@@ -73,6 +84,46 @@ class CronService {
         console.error('[CronService] Match sync failed:', e.message);
       }
     }, 1000);
+  }
+
+  /**
+   * Prewarm LIVE matches so hot streams are already resolving when clicked.
+   * Deliberately narrow to protect the upstreams: live matches only (no
+   * replays, upcoming fixtures or 24/7 networks), at most PREWARM_MAX_MATCHES
+   * per tick, one match at a time, and matches whose sources are already in the
+   * resolve cache are skipped, so a warm instance makes no upstream requests.
+   */
+  async prewarmPopular() {
+    if (this.prewarming) return;
+    this.prewarming = true;
+    try {
+      const { isMatchLive, isReplayMatch } = require('../catalog');
+      const { prewarmMatch } = require('../streams');
+      const resolveCache = this.streamResolveCache;
+      const matches = this.cacheService ? this.cacheService.getMatches() : [];
+
+      const live = matches.filter((m) => m && m.sources && m.sources.length > 0
+        && m.category !== 'networks' && !isReplayMatch(m) && isMatchLive(m));
+      live.sort((a, b) => {
+        const ap = a.popular === '1' ? 1 : 0;
+        const bp = b.popular === '1' ? 1 : 0;
+        if (ap !== bp) return bp - ap;
+        return (Number(b.date) || 0) - (Number(a.date) || 0);
+      });
+
+      const cached = (m) => m.sources.some((s) => resolveCache && resolveCache.get(`${s.source}:${m.id}:${s.id}`));
+      const todo = live.filter((m) => !cached(m)).slice(0, PREWARM_MAX_MATCHES);
+      if (todo.length === 0) return;
+
+      console.log(`[CronService] Prewarming ${todo.length} live match(es) (of ${live.length} live)`);
+      for (const m of todo) {
+        await prewarmMatch(m, null);
+      }
+    } catch (err) {
+      console.error('[CronService] Prewarm failed:', err.message);
+    } finally {
+      this.prewarming = false;
+    }
   }
 
   /** Drop stream-cache entries for matches that are no longer active. */

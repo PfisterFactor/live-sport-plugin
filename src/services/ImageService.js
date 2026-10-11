@@ -16,13 +16,16 @@
  */
 
 const undici = require('undici');
+const guard = require('./OutboundUrlGuard');
+const { withRetry } = require('./retry');
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
 
 const IMAGE_TTL_MS = 10 * 60 * 1000;   // 10 minutes
 const CACHE_MAX_ENTRIES = 120;
-const IMAGE_MAX_BYTES = 1.5 * 1024 * 1024;
-const FETCH_TIMEOUT_MS = 3000;
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const FETCH_TIMEOUT_MS = 8000;
+const FETCH_ATTEMPTS = 2;
 
 const cache = new Map();     // url -> { buffer, contentType, expiresAt }
 const inFlight = new Map();  // url -> Promise
@@ -80,7 +83,47 @@ function evictIfNeeded() {
 }
 
 /**
- * Fetch a remote image once, validate it, cache it. Returns
+ * One fetch attempt. Resolves a cache entry, or null when the upstream answered
+ * with something that is not a usable image. undici.request() does not follow
+ * redirects, so the guarded URL is the only host ever contacted.
+ */
+async function fetchOnce(url) {
+  // AbortSignal caps the TOTAL request (headers + body): a slow-loris upstream
+  // that trickles bytes can otherwise hang past headersTimeout/bodyTimeout.
+  const res = await undici.request(url, {
+    headers: { 'User-Agent': UA, 'Accept': 'image/*,*/*;q=0.8' },
+    headersTimeout: FETCH_TIMEOUT_MS,
+    bodyTimeout: FETCH_TIMEOUT_MS,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS + 1000)
+  });
+
+  const contentType = String(res.headers['content-type'] || '').split(';')[0].trim();
+  // Intentional destroys below (non-image body / size cap) make the undici
+  // body emit an 'error' event; without a listener that crashes the process.
+  res.body.on('error', () => {});
+  if (res.statusCode !== 200 || !contentType.startsWith('image/')) {
+    res.body.destroy();
+    return null;
+  }
+  // Read with a hard size cap so a huge file can never blow the heap.
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of res.body) {
+    total += chunk.length;
+    if (total > IMAGE_MAX_BYTES) { res.body.destroy(); return null; }
+    chunks.push(chunk);
+  }
+  if (total < 32) return null;
+  return {
+    buffer: Buffer.concat(chunks),
+    contentType,
+    expiresAt: Date.now() + IMAGE_TTL_MS,
+    lastAccess: Date.now()
+  };
+}
+
+/**
+ * Fetch a remote image (SSRF-guarded, retried once), validate it, cache it. Returns
  * { buffer, contentType } or null on any failure.
  */
 async function getImage(rawUrl) {
@@ -106,36 +149,19 @@ async function getImage(rawUrl) {
   const p = (async () => {
     let result = null;
     try {
-      // AbortSignal caps the TOTAL request (headers + body): a slow-loris upstream
-      // that trickles bytes can otherwise hang past headersTimeout/bodyTimeout.
-      const res = await undici.request(url, {
-        headers: { 'User-Agent': UA, 'Accept': 'image/*,*/*;q=0.8' },
-        headersTimeout: FETCH_TIMEOUT_MS,
-        bodyTimeout: FETCH_TIMEOUT_MS,
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS + 1000)
-      });
-
-      const contentType = String(res.headers['content-type'] || '').split(';')[0].trim();
-      // Intentional destroys below (non-image body / size cap) make the undici
-      // body emit an 'error' event; without a listener that crashes the process.
-      res.body.on('error', () => {});
-      if (res.statusCode === 200 && contentType.startsWith('image/')) {
-        // Read with a hard size cap so a huge file can never blow the heap.
-        const chunks = [];
-        let total = 0;
-        let tooBig = false;
-        for await (const chunk of res.body) {
-          total += chunk.length;
-          if (total > IMAGE_MAX_BYTES) { tooBig = true; res.body.destroy(); break; }
-          chunks.push(chunk);
-        }
-        if (!tooBig && total >= 32) {
-          result = {
-            buffer: Buffer.concat(chunks),
-            contentType,
-            expiresAt: Date.now() + IMAGE_TTL_MS,
-            lastAccess: Date.now()
-          };
+      const verdict = await guard.checkOutboundUrl(url);
+      if (!verdict.ok) {
+        console.warn(`[ImageService] Blocked outbound URL (${verdict.reason}): ${verdict.detail}`);
+      } else {
+        result = await withRetry(() => fetchOnce(url), {
+          attempts: FETCH_ATTEMPTS,
+          baseDelayMs: 150,
+          maxDelayMs: 600,
+          label: 'image',
+          shouldRetryError: () => true,
+          shouldRetryResult: (r) => r === null,
+        });
+        if (result) {
           cache.set(url, result);
           evictIfNeeded();
         }

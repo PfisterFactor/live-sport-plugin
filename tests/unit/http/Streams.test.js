@@ -201,7 +201,7 @@ describe('handleStream', () => {
     };
     fakes.watchFootyProvider = {
       resolveStream: async () => [
-        { url: 'https://cdn/dead.m3u8', title: 'Dead' },
+        { url: 'https://cdn/dead.m3u8', title: 'Dead', behaviorHints: { proxyHeaders: { request: { Referer: 'https://watchfooty.st/' } } } },
         { url: '/watch?url=https%3A%2F%2Fe.st%2Fa', title: 'Web' },
       ],
     };
@@ -231,7 +231,7 @@ describe('handleStream', () => {
     };
     const { streams } = await handleStream('tv', 'nuvio_sport_m1');
     expect(streams[0].name).toBe('⚡ Direct Stream');
-    expect(streams[0].title).toBe('⚽ WatchFooty | 📺 Sky Sports\n📺 Quality: 1080p | 4.2 Mbps\n👥 42 Viewers');
+    expect(streams[0].title).toBe('⚽ WatchFooty | 📺 Sky Sports 🇬🇧 [UK • English]\n📺 Quality: 1080p | 4.2 Mbps\n👥 42 Viewers');
   });
 
   it('labels web player entries separately and omits an absent bitrate', async () => {
@@ -333,5 +333,80 @@ describe('handleStream', () => {
     const out = await handleStream('tv', 'nuvio_sport_m1');
     expect(out.streams).toEqual([]);
     expect(out.cacheMaxAge).toBe(0);
+  });
+});
+
+describe('handleStream replay, language and web-stream handling', () => {
+  const match = (sources) => ({ id: 'm1', title: 'A vs B', category: 'football', sources });
+  const provide = (name, streams) => { fakes[name] = { resolveStream: async () => streams }; };
+
+  it('ranks English first, then the configured languages, then the rest', async () => {
+    fakes.cacheService = { getMatches: () => [match([{ source: 'watchfooty', id: 'w' }])] };
+    provide('watchFootyProvider', [
+      { url: 'https://cdn/de.m3u8', title: 'Feed (Sky Sport DE)', score: 90 },
+      { url: 'https://cdn/en.m3u8', title: 'Feed (Sky Sports)', score: 10 },
+      { url: 'https://cdn/es.m3u8', title: 'Feed (Movistar Plus)', score: 20 },
+    ]);
+    const plain = await handleStream('tv', 'nuvio_sport_m1');
+    expect(plain.streams.map((s) => s.language)).toEqual(['English', 'German', 'Spanish']);
+
+    const prefer = await handleStream('tv', 'nuvio_sport_m1', { languages: 'Spanish' });
+    expect(prefer.streams.map((s) => s.language)).toEqual(['English', 'Spanish', 'German']);
+  });
+
+  it('hides web streams but keeps direct and YouTube ones when webStreams is disabled', async () => {
+    fakes.cacheService = { getMatches: () => [match([{ source: 'replayzone', id: 'r' }])] };
+    provide('replayzoneProvider', [
+      { url: 'https://cdn/a.m3u8', title: 'Direct' },
+      { externalUrl: 'https://dailymotion.com/video/x', title: 'Web' },
+      { ytId: 'abc123', title: 'YouTube' },
+    ]);
+    const all = await handleStream('tv', 'nuvio_sport_m1');
+    expect(all.streams.map((s) => s.name).sort()).toEqual(['⚡ Direct Stream', '▶️ YouTube', '🌐 Web Stream'].sort());
+
+    const noWeb = await handleStream('tv', 'nuvio_sport_m1', { webStreams: 'disabled' });
+    expect(noWeb.streams.map((s) => s.name).sort()).toEqual(['⚡ Direct Stream', '▶️ YouTube'].sort());
+  });
+
+  it('turns a ytId into a YouTube external url and unwraps a /watch wrapper', async () => {
+    fakes.cacheService = { getMatches: () => [match([{ source: 'livetv', id: 'l' }])] };
+    provide('liveTvProvider', [
+      { ytId: 'abc123', title: 'Highlights' },
+      { externalUrl: `/watch?url=${encodeURIComponent('https://www.youtube.com/watch?v=zzz')}`, title: 'Wrapped' },
+    ]);
+    const { streams } = await handleStream('tv', 'nuvio_sport_m1');
+    expect(streams.map((s) => s.externalUrl).sort()).toEqual([
+      'https://www.youtube.com/watch?v=abc123',
+      'https://www.youtube.com/watch?v=zzz',
+    ]);
+    expect(streams.every((s) => s.name === '▶️ YouTube')).toBe(true);
+  });
+
+  it('labels replay parts and drops duplicate clips', async () => {
+    fakes.cacheService = { getMatches: () => [match([{ source: 'livetv', id: 'l1' }, { source: 'replayzone', id: 'r1' }])] };
+    provide('liveTvProvider', [{ url: 'https://cdn/full.mp4', title: '1st Half (Direct)' }]);
+    provide('replayzoneProvider', [{ url: 'https://cdn/full.mp4', title: '1st Half (Direct)' }]);
+    const { streams } = await handleStream('tv', 'nuvio_sport_m1');
+    expect(streams).toHaveLength(1);
+    expect(streams[0].title).toContain('| 🎬 1st Half');
+    expect(safeFetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('resolves every part for a hub episode but only the selected part otherwise', async () => {
+    const sources = [
+      { source: 'livetv', id: 'p1', name: 'Part 1', url: 'u1' },
+      { source: 'replayzone', id: 'p2', name: 'Part 2', url: 'u2' },
+    ];
+    fakes.cacheService = { getMatches: () => [match(sources)] };
+    const asked = [];
+    fakes.liveTvProvider = { resolveStream: async (id) => { asked.push(id); return [{ url: `https://cdn/${id}.mp4`, title: id }]; } };
+    fakes.replayzoneProvider = { resolveStream: async (id) => { asked.push(id); return [{ url: `https://cdn/${id}.mp4`, title: id }]; } };
+
+    await handleStream('series', 'nuvio_sport_m1:hub_1:2');
+    expect(asked.sort()).toEqual(['p1', 'p2']);
+
+    asked.length = 0;
+    await handleStream('series', 'nuvio_sport_m1:s:2');
+    expect(asked).toEqual(['p2']);
   });
 });

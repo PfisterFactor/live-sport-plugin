@@ -35,6 +35,13 @@ export default {
     if (referer) newHeaders.set('Referer', referer);
     if (origin) newHeaders.set('Origin', origin);
     
+    // Scrub client-identifying and Cloudflare-internal headers so upstreams see
+    // neither the viewer's IP nor that the request came from a Worker.
+    for (const h of ['x-forwarded-for', 'x-real-ip', 'cf-connecting-ip', 'true-client-ip', 'forwarded',
+      'cf-ray', 'cf-visitor', 'cf-worker', 'cf-ew-via', 'cdn-loop']) {
+      newHeaders.delete(h);
+    }
+
     // OVERWRITE User-Agent to ensure scraper and player exactly match for token binding
     newHeaders.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36');
     newHeaders.delete('Host');

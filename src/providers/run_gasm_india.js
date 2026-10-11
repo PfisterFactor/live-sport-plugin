@@ -100,6 +100,34 @@ global.sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: ()
 global.btoa = (str) => Buffer.from(str).toString('base64');
 global.atob = (b64Encoded) => Buffer.from(b64Encoded, 'base64').toString();
 
+// The runner is permission-scoped to this directory and node_modules, so it
+// cannot require ../impitClient; the browser-TLS fetch is inlined here. The
+// embed host's /fetch endpoint sits behind Cloudflare, which rejects Node's
+// TLS fingerprint.
+let impit = null;
+try {
+  const { Impit } = require('impit');
+  impit = new Impit();
+} catch (e) {}
+const { request: undiciRequest } = require('undici');
+
+async function gasmUndiciFetch(url, opts) {
+  const res = await undiciRequest(url, opts);
+  const buf = await res.body.arrayBuffer();
+  return { status: res.statusCode, headers: res.headers, buf };
+}
+
+async function gasmSafeFetch(url, opts) {
+  if (impit) {
+    try {
+      const res = await impit.fetch(url, opts);
+      const buf = await res.arrayBuffer();
+      if (res.status !== 403) return { status: res.status, headers: res.headers, buf };
+    } catch (e) {}
+  }
+  return gasmUndiciFetch(url, opts);
+}
+
 const OriginalRequest = global.Request;
 global.Request = function(input, init) {
   if (typeof input === 'string' && input.startsWith('/')) {
@@ -212,19 +240,22 @@ global.fetch = async (url, opts) => { console.log('FETCH CALLED WITH:', url);
       reqHeaders.set('Content-Type', 'application/octet-stream');
       console.log('HEADERS:', Array.from(reqHeaders.entries()));
       
-      const response = await originalFetch(proxyUrl, {
-
+      const response = await gasmSafeFetch(proxyUrl, {
           method: fetchOpts.method || 'POST',
-          headers: reqHeaders,
+          headers: Object.fromEntries(reqHeaders.entries()),
           body: reqBody ? Buffer.from(reqBody) : undefined
       });
-      
-      if (!response.ok) {
-          console.error(`[WASM] Proxy fetch failed: ${response.status} ${response.statusText}`);
+
+      if (response.status < 200 || response.status >= 300) {
+          console.error(`[WASM] Proxy fetch failed: ${response.status}`);
           process.exit(1);
       }
-      
-      return response;
+
+      const realHeaders = new Headers();
+      const rawHeaders = response.headers || {};
+      if (typeof rawHeaders.forEach === 'function') rawHeaders.forEach((v, k) => realHeaders.set(k, v));
+      else for (const [k, v] of Object.entries(rawHeaders)) realHeaders.set(k, Array.isArray(v) ? v[0] : String(v));
+      return new Response(response.buf, { status: response.status, headers: realHeaders });
     } catch (err) {
       console.error(`[WASM] Network error on proxy fetch: ${err.message}`);
       process.exit(1);

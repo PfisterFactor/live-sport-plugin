@@ -36,6 +36,13 @@ const CF_PROTECTED_DOMAINS = new Set([
   'embedsport.xyz',
 ]);
 
+/**
+ * Channel path of an embedindia-style embed URL. The host rotates (the ppv.st
+ * catalog now serves taifood-blog.asia), so the path shape is what identifies
+ * the family; the slug may span segments (nfl/2026-10-11/bal-atl).
+ */
+const EMBED_PATH_RE = /^https?:\/\/[^/]+\/embed(?:-noads)?\/(?:admin\/)?([^?#]+)/;
+
 class EmbedIndiaProvider extends BaseProvider {
   constructor(opts) {
     super(opts);
@@ -71,9 +78,7 @@ class EmbedIndiaProvider extends BaseProvider {
    * Shared by resolveStream and the manifest proxy's token renewal.
    */
   async extractM3u8(embedUrl, referer) {
-    if (!embedUrl.includes('embedindia')) return null;
-
-    const match = embedUrl.match(/embed(?:-noads)?\/(?:admin\/)?([^\/?]+)/);
+    const match = embedUrl.match(EMBED_PATH_RE);
     if (!match) return null;
     const channelId = match[1];
 
@@ -81,7 +86,7 @@ class EmbedIndiaProvider extends BaseProvider {
     const effectiveReferer = referer || `${origin}/`;
     const scriptPath = path.join(__dirname, 'run_gasm_india.js');
 
-    const stdout = await runProviderScript(scriptPath, [channelId, 'EMPTY', 'EMPTY', origin, effectiveReferer]);
+    const stdout = await runProviderScript(scriptPath, [channelId, 'EMPTY', 'EMPTY', embedUrl]);
     const m = stdout.match(/"file":\s*"(https?:\/\/[^"]+\.m3u8.*?)"/);
     if (!m) return null;
 

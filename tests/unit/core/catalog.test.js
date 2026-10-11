@@ -16,7 +16,12 @@ const streams = require('../../../src/streams');
 
 spyOn(container, 'resolve').mockImplementation((name) => {
   if (name === 'cronService') return { ensureFresh: () => { ensureFreshCalls += 1; } };
-  if (name === 'cacheService') return { getMatches: () => matches };
+  if (name === 'cacheService') {
+    return {
+      getMatches: () => matches,
+      findMatch: (id) => matches.find(m => m.id === id || (m.aliasIds || []).includes(id)) || null
+    };
+  }
   throw new Error(`unexpected resolve('${name}')`);
 });
 spyOn(streams, 'prewarmMatch').mockImplementation(async (match) => { prewarmed.push(match); });
@@ -422,9 +427,19 @@ describe('handleMeta', () => {
     expect((await handleMeta('tv', 'tt12345', {})).meta).toBeNull();
   });
 
-  it('returns null when the id is not in the cache', async () => {
+  it('serves an explanatory placeholder instead of null when the id is not cached', async () => {
     matches = [match({ id: 'm1' })];
-    expect((await handleMeta('tv', 'nuvio_sport_missing', {})).meta).toBeNull();
+    const res = await handleMeta('tv', 'nuvio_sport_dlv_123_real-madrid-vs-barcelona', {});
+    expect(res.meta.id).toBe('nuvio_sport_dlv_123_real-madrid-vs-barcelona');
+    expect(res.meta.name).toBe('⏱️ Real Madrid Vs Barcelona');
+    expect(res.meta.description).toContain('may have ended');
+    expect(prewarmed).toEqual([]);
+  });
+
+  it('resolves a stale id through the cache alias lookup', async () => {
+    matches = [match({ id: 'm1', title: 'Game', aliasIds: ['old_id'] })];
+    const { meta } = await handleMeta('tv', 'nuvio_sport_old_id', {});
+    expect(meta.id).toBe('nuvio_sport_m1');
   });
 
   it('returns the same meta shape as the catalog and prewarms the match', async () => {

@@ -18,6 +18,10 @@ const StreamCornerProvider = require('./providers/StreamCornerProvider');
 const ZliveProvider = require('./providers/ZliveProvider');
 const DliveProvider = require('./providers/DliveProvider');
 const StreamedPkProvider = require('./providers/StreamedPkProvider');
+const DamiTvProvider = require('./providers/DamiTvProvider');
+const LiveTVProvider = require('./providers/LiveTVProvider');
+const ReplayZoneProvider = require('./providers/ReplayZoneProvider');
+const IframeDomainRegistry = require('./services/IframeDomainRegistry');
 
 const registrations = {
   cacheService: (c) => new CacheService(c),
@@ -40,7 +44,12 @@ const registrations = {
   ppvProvider: (c) => new PpvProvider(c),
   streamCornerProvider: (c) => new StreamCornerProvider(c),
   zliveProvider: (c) => new ZliveProvider(c),
+  iframeDomainRegistry: () => new IframeDomainRegistry(),
   dliveProvider: (c) => new DliveProvider(c),
+  damiTvProvider: (c) => new DamiTvProvider(c),
+  liveTvProvider: (c) => new LiveTVProvider(c),
+  replayZoneProvider: (c) => new ReplayZoneProvider(c),
+  replayzoneProvider: (c) => c.replayZoneProvider,
 };
 
 const instances = new Map();

@@ -16,14 +16,25 @@ class CdnLiveProvider extends BaseProvider {
     this.config = config;
     this.name = config.name;
     this.apiUrl = config.apiUrl;
+    this.apiUrls = [config.apiUrl, ...(config.fallbackApiUrls || [])];
 
+    // Both API hosts serve the same event feed, so a dead or rate-limited
+    // endpoint falls through to the next instead of emptying the catalog.
     this.fetchMain = this.circuitBreaker.wrap(`${this.name}_fetchMain`, async () => {
-      const res = await this.proxyFetch(this.apiUrl, {
-        headers: { 'User-Agent': DEFAULT_UA },
-        timeoutMs: 20000,
-      });
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      return await res.json();
+      let lastErr = null;
+      for (const url of this.apiUrls) {
+        try {
+          const res = await this.proxyFetch(url, {
+            headers: { 'User-Agent': DEFAULT_UA },
+            timeoutMs: 20000,
+          });
+          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+          return await res.json();
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      throw lastErr || new Error('no sports events host answered');
     });
   }
 
@@ -111,30 +122,75 @@ class CdnLiveProvider extends BaseProvider {
     return matches;
   }
 
+  /** Decode one URL-safe base64 fragment of an obfuscated player URL. */
+  _decodeB64Part(part) {
+    let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    try { return Buffer.from(b64, 'base64').toString('utf8'); } catch (_) { return ''; }
+  }
+
   /**
-   * Scrape the obfuscated atob()-concatenated m3u8 URL out of a player page.
+   * Scrape the obfuscated m3u8 URL out of a player page. Player pages come in
+   * three shapes, tried in order: `var x = atob('..') + atob('..')`, a decoder
+   * function applied to base64 variables, and a plain URL in the markup.
    */
   _extractM3u8FromPlayerHtml(html) {
-    const decoderMatch = html.match(/function\s+([a-zA-Z0-9_]+)\s*\([a-zA-Z0-9_]+\)\s*\{.+?atob/);
-    if (!decoderMatch) return '';
-    const decoderName = decoderMatch[1];
-    const concatMatch = html.match(new RegExp(`var\\s+([a-zA-Z0-9_]+)\\s*=\\s*${decoderName}\\([^;]+;`));
-    if (!concatMatch) return '';
-
-    const varRegex = new RegExp(`${decoderName}\\(([a-zA-Z0-9_]+)\\)`, 'g');
-    const vars = [];
-    let match;
-    while ((match = varRegex.exec(concatMatch[0])) !== null) vars.push(match[1]);
-
     let m3u8Url = '';
-    for (const v of vars) {
-      const valMatch = html.match(new RegExp(`var\\s+${v}\\s*=\\s*(?:'([^']+)'|"([^"]+)")`));
-      if (!valMatch) continue;
-      let b64 = (valMatch[1] || valMatch[2]).replace(/-/g, '+').replace(/_/g, '/');
-      while (b64.length % 4) b64 += '=';
-      try { m3u8Url += Buffer.from(b64, 'base64').toString('utf8'); } catch (_) {}
+
+    const direct = html.match(/var\s+[a-zA-Z0-9_]+\s*=\s*(atob\([^;]+;)/);
+    if (direct) {
+      const parts = /atob\s*\(\s*["']([^"']+)["']\s*\)/g;
+      let p;
+      while ((p = parts.exec(direct[1])) !== null) m3u8Url += this._decodeB64Part(p[1]);
     }
-    return m3u8Url;
+
+    if (!m3u8Url) {
+      const decoderMatch = html.match(/function\s+([a-zA-Z0-9_]+)\s*\([a-zA-Z0-9_]+\)\s*\{[\s\S]{0,300}?atob/);
+      if (decoderMatch) {
+        const decoderName = decoderMatch[1];
+        const concatMatch = html.match(new RegExp(`var\\s+([a-zA-Z0-9_]+)\\s*=\\s*${decoderName}\\([^;]+;`));
+        if (concatMatch) {
+          const varRegex = new RegExp(`${decoderName}\\(([a-zA-Z0-9_]+)\\)`, 'g');
+          let match;
+          while ((match = varRegex.exec(concatMatch[0])) !== null) {
+            const valMatch = html.match(new RegExp(`var\\s+${match[1]}\\s*=\\s*(?:'([^']+)'|"([^"]+)")`));
+            if (valMatch) m3u8Url += this._decodeB64Part(valMatch[1] || valMatch[2]);
+          }
+        }
+      }
+    }
+
+    if (!m3u8Url) {
+      const plain = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
+      if (plain) m3u8Url = plain[1];
+    }
+    return m3u8Url.includes('.m3u8') ? m3u8Url : '';
+  }
+
+  /** The player page on the sibling mirror (.tv <-> .is), or the page itself when it has none. */
+  _playerMirrors(playerUrl) {
+    const urls = [playerUrl];
+    if (playerUrl.includes('cdnlivetv.tv')) urls.push(playerUrl.replace('cdnlivetv.tv', 'cdnlivetv.is'));
+    else if (playerUrl.includes('cdnlivetv.is')) urls.push(playerUrl.replace('cdnlivetv.is', 'cdnlivetv.tv'));
+    return urls;
+  }
+
+  /** Try each player mirror until one yields a manifest URL. */
+  async _decodePlayer(playerUrl, refererOrigin) {
+    for (const url of this._playerMirrors(playerUrl)) {
+      try {
+        const res = await this.proxyFetch(url, {
+          headers: { 'User-Agent': DEFAULT_UA, 'Referer': `${refererOrigin}/` },
+          timeoutMs: 10000,
+        });
+        if (!res.ok) continue;
+        const m3u8Url = this._extractM3u8FromPlayerHtml(await res.text());
+        if (m3u8Url) return m3u8Url;
+      } catch (e) {
+        console.warn(`[${this.name}] Failed to extract m3u8 for ${url}:`, e.message);
+      }
+    }
+    return '';
   }
 
   _findItem(data, sourceId) {
@@ -158,36 +214,25 @@ class CdnLiveProvider extends BaseProvider {
       if (item && Array.isArray(item.channels)) {
         for (const [idx, ch] of item.channels.entries()) {
           if (!ch.url) continue;
-          try {
-            const playerRes = await this.proxyFetch(ch.url, {
-              headers: { 'User-Agent': DEFAULT_UA, 'Referer': `${refererOrigin}/` },
-              timeoutMs: 10000,
-            });
-
-            if (playerRes.status >= 200 && playerRes.status < 300) {
-              const m3u8Url = this._extractM3u8FromPlayerHtml(await playerRes.text());
-              if (m3u8Url) {
-                streams.push(new StreamEntity({
-                  name: this.name,
-                  title: ch.channel_name || `${streamLabel} ${idx + 1}`,
-                  url: m3u8Url,
-                  behaviorHints: {
-                    notWebReady: true,
-                    proxyHeaders: {
-                      request: {
-                        'Origin': refererOrigin,
-                        'Referer': `${refererOrigin}/`,
-                        'User-Agent': DEFAULT_UA,
-                      },
-                    },
+          const m3u8Url = await this._decodePlayer(ch.url, refererOrigin);
+          if (m3u8Url) {
+            streams.push(new StreamEntity({
+              name: this.name,
+              title: ch.channel_name || `${streamLabel} ${idx + 1}`,
+              url: m3u8Url,
+              behaviorHints: {
+                notWebReady: true,
+                proxyHeaders: {
+                  request: {
+                    'Origin': refererOrigin,
+                    'Referer': `${refererOrigin}/`,
+                    'User-Agent': DEFAULT_UA,
                   },
-                  resolution: 'HD',
-                }));
-                continue;
-              }
-            }
-          } catch (e) {
-            console.warn(`[${this.name}] Failed to extract m3u8 for ${ch.url}:`, e.message);
+                },
+              },
+              resolution: 'HD',
+            }));
+            continue;
           }
 
           streams.push(new StreamEntity({
@@ -214,6 +259,7 @@ CdnLiveProvider.VARIANTS = {
     refererOrigin: 'https://cdnlivetv.tv',
     streamLabel: 'CDNLive Stream',
     allCategories: false,
+    fallbackApiUrls: ['https://api.cdnlivetv.is/api/v1/events/sports/?user=streamsports99&plan=vip'],
   },
   streamsports99: {
     name: 'StreamSports99',
@@ -225,6 +271,7 @@ CdnLiveProvider.VARIANTS = {
     allCategories: true,
     // Upstream lists fixtures days ahead that never get channels.
     timeWindow: { pastMs: 6 * 60 * 60 * 1000, futureMs: 48 * 60 * 60 * 1000 },
+    fallbackApiUrls: ['https://api.cdnlivetv.tv/api/v1/events/sports/?user=cdnlivetv&plan=free'],
   },
 };
 

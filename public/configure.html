@@ -207,6 +207,26 @@
       box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
     }
 
+    .select-input {
+      width: 100%;
+      padding: 14px 16px;
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      color: #fff;
+      font-size: 15px;
+      box-sizing: border-box;
+      font-family: 'Inter', sans-serif;
+      transition: all 0.2s;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .select-input option {
+      background: #1a1a1a;
+      color: #fff;
+    }
+
     .btn {
       display: block;
       width: 100%;
@@ -283,6 +303,30 @@
     </div>
 
     <div class="section">
+      <h3>Playback</h3>
+      <div class="input-group">
+        <label>Preferred Languages (comma separated, English is always first)</label>
+        <input type="text" id="languages" list="languageOptions" placeholder="e.g. Spanish, Arabic, Hindi" autocomplete="off">
+        <datalist id="languageOptions"></datalist>
+      </div>
+      <div class="input-group">
+        <label>Replay catalog</label>
+        <select id="replayFilter" class="select-input">
+          <option value="all">All replays</option>
+          <option value="mainstream">Mainstream only</option>
+          <option value="disabled">Hide replays</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label>Web streams (embedded web players; turn off if your player cannot open them)</label>
+        <select id="webStreams" class="select-input">
+          <option value="enabled">Enabled</option>
+          <option value="disabled">Disabled</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section">
       <h3>Streaming Sources</h3>
       <div class="sports-grid" id="sourcesGrid">
         <label class="checkbox-label active"><input type="checkbox" value="streamfree" checked> 🌐 StreamFree</label>
@@ -354,6 +398,9 @@
     const checkboxes = document.querySelectorAll('#sportsGrid input[type="checkbox"]');
     const sourceCheckboxes = document.querySelectorAll('#sourcesGrid input[type="checkbox"]');
     const timezoneSelect = document.getElementById('timezone');
+    const languagesInput = document.getElementById('languages');
+    const replayFilterSelect = document.getElementById('replayFilter');
+    const webStreamsSelect = document.getElementById('webStreams');
 
     // Attempt to load existing config from URL
     let existingConfig = {};
@@ -438,7 +485,31 @@
     if (existingConfig.teams) {
       input.value = existingConfig.teams;
     }
-    
+
+    if (existingConfig.languages) {
+      languagesInput.value = existingConfig.languages;
+    }
+
+    if (['mainstream', 'disabled'].includes(existingConfig.replayFilter)) {
+      replayFilterSelect.value = existingConfig.replayFilter;
+    }
+
+    if (existingConfig.webStreams === 'disabled') {
+      webStreamsSelect.value = 'disabled';
+    }
+
+    fetch('/api/options')
+      .then(res => (res.ok ? res.json() : null))
+      .then(options => {
+        if (!options || !Array.isArray(options.languages)) return;
+        const list = document.getElementById('languageOptions');
+        options.languages.forEach(language => {
+          const option = document.createElement('option');
+          option.value = language;
+          list.appendChild(option);
+        });
+      })
+      .catch(() => {});
     if (existingConfig.sports) {
       if (existingConfig.sports === 'none') {
         checkboxes.forEach(cb => { cb.checked = false; cb.closest('.checkbox-label').classList.remove('active'); });
@@ -483,6 +554,10 @@
       const config = {};
       if (teams) config.teams = teams;
       if (tz) config.timezone = tz;
+      const languages = languagesInput.value.split(',').map(l => l.trim()).filter(Boolean).join(',');
+      if (languages) config.languages = languages;
+      if (replayFilterSelect.value !== 'all') config.replayFilter = replayFilterSelect.value;
+      if (webStreamsSelect.value !== 'enabled') config.webStreams = webStreamsSelect.value;
 
       if (selectedSports.length < checkboxes.length) {
         config.sports = selectedSports.join(',');
@@ -519,6 +594,9 @@
     });
 
     input.addEventListener('input', updateLink);
+    languagesInput.addEventListener('input', updateLink);
+    replayFilterSelect.addEventListener('change', updateLink);
+    webStreamsSelect.addEventListener('change', updateLink);
     timezoneSelect.addEventListener('change', updateLink);
     [...checkboxes, ...sourceCheckboxes].forEach(cb => {
       cb.addEventListener('change', (e) => {
