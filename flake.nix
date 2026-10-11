@@ -50,6 +50,9 @@
               runHook preInstall
               share=$out/share/live-sport-plugin
               mkdir -p $share
+              # bun filters optional deps by os/cpu but not libc; nixpkgs is glibc,
+              # and autoPatchelf cannot satisfy the musl addon.
+              rm -rf node_modules/impit-linux-*-musl
               cp -r package.json src public node_modules $share/
               makeWrapper ${lib.getExe nodejs} $out/bin/live-sport-plugin \
                 --add-flags $share/src/index.js \
