@@ -1,4 +1,6 @@
 node_modules/
+result
+result-*
 .env
 *.log
 .DS_Store

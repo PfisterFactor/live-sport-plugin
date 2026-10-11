@@ -110,6 +110,23 @@ bunx pm2 startup
 
 ---
 
+### Option 4: Nix Flake (Reproducible Build)
+
+The flake builds the addon with [bun2nix](https://github.com/nix-community/bun2nix). Every dependency is pinned by hash in `bun.nix` and `flake.lock`, so the build needs no network and produces the same store path on every machine. The package runs on Node 22 (`aarch64-darwin`, `x86_64-linux`, `aarch64-linux`).
+
+```bash
+# Run without installing
+PORT=7000 nix run github:PfisterFactor/live-sport-plugin
+
+# Or build a store path
+nix build .#default
+./result/bin/live-sport-plugin
+```
+
+After you change dependencies, run `bun install`, then regenerate the Nix lock with `bunx bun2nix -o bun.nix` and commit both files.
+
+---
+
 ## ✨ Key Features
 
 - **🏟️ Multi-Source Live Aggregator:** Concurrently scrapes and unifies live fixtures and 24/7 channels from many scrapers (Streamed.pk, StreamFree, WatchFooty, SportyHunter, TimStreams, StreamSports99, Streamic, CDNLiveTV, PPV.st, StreamCorner, Zlive, DaddyLive (dlive.sx), DamiTV) into a deduplicated catalog with merged stream choices. Streamed.pk falls back to the tvapp1.pk API mirror when its own API is unreachable.
