@@ -5,6 +5,7 @@ const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const KEEP_ALIVE_INTERVAL_MS = 14 * 60 * 1000;
 const PREWARM_INTERVAL_MS = parseInt(process.env.PREWARM_INTERVAL_MS, 10) || 3 * 60 * 1000;
 const PREWARM_MAX_MATCHES = parseInt(process.env.PREWARM_MAX_MATCHES, 10) || 12;
+const BOOT_RETRY_DELAY_MS = 60 * 1000;
 
 class CronService {
   constructor({ matchAggregator, streamResolveCache, cacheService }) {
@@ -83,7 +84,22 @@ class CronService {
       } catch(e) {
         console.error('[CronService] Match sync failed:', e.message);
       }
+      this.scheduleBootRetry();
     }, 1000);
+  }
+
+  /**
+   * A cold instance often loses providers to the sync budget on its first
+   * sync, and the next sync is otherwise up to 4 hours away. Run one more
+   * sync shortly after boot when that happened.
+   */
+  scheduleBootRetry() {
+    const timedOut = (this.matchAggregator && this.matchAggregator.lastSyncTimedOut) || [];
+    if (timedOut.length === 0) return;
+    console.log(`[CronService] ${timedOut.length} provider(s) timed out on the first sync (${timedOut.join(', ')}); retrying in ${BOOT_RETRY_DELAY_MS / 1000}s.`);
+    setTimeout(() => {
+      this.runSync().catch((err) => console.error('[CronService] Boot retry sync failed:', err.message));
+    }, BOOT_RETRY_DELAY_MS).unref();
   }
 
   /**

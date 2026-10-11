@@ -52,8 +52,6 @@ describe('deanEdwardsUnpack.unpack', () => {
     const packed = fs.readFileSync(packedPath, 'utf8');
     const decoded = unpack(packed);
 
-    // Mirrors ReplayZoneProvider.extractSoccerfull(): the `file:` key holds a
-    // links.* chain, so the playlist URL is taken from the payload itself.
     const embedded = decoded.match(/https?:\/\/[^"'\s\\]+\.m3u8[^"'\s\\]*/);
     expect(embedded).not.toBeNull();
     expect(embedded[0]).toContain('master.m3u8');

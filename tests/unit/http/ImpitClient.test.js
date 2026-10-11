@@ -126,3 +126,21 @@ describe('safeFetch undici fallback', () => {
     expect(Date.now() - started).toBeLessThan(1500);
   }, 15000);
 });
+
+describe('withFetchDeadline', () => {
+  it('clamps a long per-call timeout so a hung impit still falls back to undici in time', async () => {
+    impitSpy = spyOn(impit(), 'fetch').mockImplementation(() => new Promise(() => {}));
+    const started = Date.now();
+    const res = await impitClient.withFetchDeadline(Date.now() + 1000, () =>
+      impitClient.safeFetch(`${echoUrl}/echo`, { timeoutMs: 15000 }));
+    expect(res.status).toBe(200);
+    expect(Date.now() - started).toBeLessThan(1500);
+  }, 15000);
+
+  it('refuses to start a fetch once the deadline has passed', async () => {
+    impitSpy = spyOn(impit(), 'fetch');
+    await expect(impitClient.withFetchDeadline(Date.now() - 1, () =>
+      impitClient.safeFetch(`${echoUrl}/echo`))).rejects.toThrow(/budget exhausted/);
+    expect(impitSpy).not.toHaveBeenCalled();
+  });
+});

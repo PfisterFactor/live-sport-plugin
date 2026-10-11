@@ -171,6 +171,9 @@ class LiveTVProvider extends BaseProvider {
     this.enabled = process.env.LIVETV_DISABLED !== 'true';
     this._streamCache = new Map();
     this._cacheTtlMs = Number(process.env.LIVETV_STREAM_TTL_MS || 6 * 3600 * 1000);
+    // 21 archive pages of ~1.5 MB each; on Render they take ~30s, far past the
+    // default per-provider sync budget. Replays are re-scraped only every 12h.
+    this.syncTimeoutMs = Number(process.env.LIVETV_SYNC_TIMEOUT_MS || 60000);
   }
 
   _recentYmd() {

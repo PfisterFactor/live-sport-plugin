@@ -128,9 +128,9 @@ describe('syncMatches merge bookkeeping', () => {
 describe('syncMatches retention', () => {
   it('keeps replay-provider sessions for 21 days and other fixtures for 24 hours', async () => {
     const agg = new MatchAggregator({
-      replayZoneProvider: provider([
-        match({ id: 'r20', title: 'A vs B - Replay', date: String(NOW.getTime() - 20 * DAY), sources: [src('replayzone', 'r20')] }),
-        match({ id: 'r22', title: 'C vs D - Replay', date: String(NOW.getTime() - 22 * DAY), sources: [src('replayzone', 'r22')] })
+      liveTvProvider: provider([
+        match({ id: 'r20', title: 'A vs B - Replay', date: String(NOW.getTime() - 20 * DAY), sources: [src('livetv', 'r20')] }),
+        match({ id: 'r22', title: 'C vs D - Replay', date: String(NOW.getTime() - 22 * DAY), sources: [src('livetv', 'r22')] })
       ]),
       streamFreeProvider: provider([
         match({ id: 'fresh', title: 'E vs F', date: String(NOW.getTime() - 23 * H) }),
@@ -145,14 +145,14 @@ describe('syncMatches retention', () => {
   it('reuses cached replays for 12 hours instead of re-scraping the replay providers', async () => {
     const cache = new CacheService();
     let scrapes = 0;
-    const replayZone = {
-      sourceName: 'replayzone',
+    const liveTv = {
+      sourceName: 'livetv',
       getMatches: async () => {
         scrapes += 1;
-        return [match({ id: 'r1', title: 'A vs B - Replay', date: String(NOW.getTime() - DAY), sources: [src('replayzone', 'r1')] })];
+        return [match({ id: 'r1', title: 'A vs B - Replay', date: String(NOW.getTime() - DAY), sources: [src('livetv', 'r1')] })];
       }
     };
-    const agg = new MatchAggregator({ replayZoneProvider: replayZone, streamFreeProvider: provider([match({ id: 'x', title: 'E vs F' })]), cacheService: cache });
+    const agg = new MatchAggregator({ liveTvProvider: liveTv, streamFreeProvider: provider([match({ id: 'x', title: 'E vs F' })]), cacheService: cache });
 
     await agg.syncMatches();
     expect(scrapes).toBe(1);
@@ -210,5 +210,49 @@ describe('syncMatches DaddyLive carry-forward', () => {
       cacheService: cache
     });
     expect((await healthy.syncMatches()).map(m => m.id)).toEqual(['new']);
+  });
+});
+
+describe('syncMatches archived replays', () => {
+  const archivedDate = String(NOW.getTime() - 4 * DAY);
+  const replay = (id, title, over = {}) => match({ id, title, category: 'hockey', date: archivedDate, sources: [src('livetv', id)], ...over });
+
+  it('does not fold an old replay into a 24/7 channel that shares a word', async () => {
+    const agg = new MatchAggregator({
+      streamedPkProvider: provider([match({ id: 'chan', title: 'Fox League', category: 'networks', date: '', sources: [src('streamedpk', 'chan')] })]),
+      liveTvProvider: provider([replay('r1', 'Koelner Haie - Herning Blue Fox')]),
+      cacheService: new CacheService()
+    });
+    const out = await agg.syncMatches();
+    const chan = out.find(m => m.id === 'chan');
+    expect(chan.title).toBe('Fox League');
+    expect(chan.sources.map(s => s.source)).toEqual(['streamedpk']);
+    expect(out.some(m => m.id === 'r1')).toBe(true);
+  });
+
+  it('still merges the same old replay listed twice on the same day', async () => {
+    const agg = new MatchAggregator({
+      liveTvProvider: provider([
+        replay('r1', 'Koelner Haie vs Herning Blue Fox'),
+        replay('r2', 'Herning Blue Fox vs Koelner Haie'),
+      ]),
+      cacheService: new CacheService()
+    });
+    const out = await agg.syncMatches();
+    expect(out).toHaveLength(1);
+    expect(out[0].sources.map(s => s.id).sort()).toEqual(['r1', 'r2']);
+  });
+});
+
+describe('syncMatches provider budget', () => {
+  it('records providers that missed their budget and keeps the ones that answered', async () => {
+    const agg = new MatchAggregator({
+      streamFreeProvider: provider([match({ id: 'x', title: 'E vs F' })]),
+      watchFootyProvider: { name: 'WatchFooty', syncTimeoutMs: 50, getMatches: () => new Promise(() => {}) },
+      cacheService: new CacheService()
+    });
+    const out = await agg.syncMatches();
+    expect(out.map(m => m.id)).toEqual(['x']);
+    expect(agg.lastSyncTimedOut).toEqual(['WatchFooty']);
   });
 });

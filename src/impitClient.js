@@ -13,7 +13,19 @@
 
 'use strict';
 
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { request: undiciRequest, Agent } = require('undici');
+
+const fetchDeadline = new AsyncLocalStorage();
+
+/**
+ * Runs `fn` with an absolute deadline (epoch ms) that every safeFetch started
+ * inside it honours: timeouts are clamped to the time left, so the impit/undici
+ * split always fits the caller's budget instead of outliving it.
+ */
+function withFetchDeadline(deadlineAt, fn) {
+  return fetchDeadline.run(deadlineAt, fn);
+}
 
 // -- Singleton -----------------------------------------------------------------
 // One long-lived instance: every new Impit spawns its own tokio runtime, and
@@ -190,7 +202,14 @@ async function undiciSend(hop, signal) {
  * @returns {{ ok, status, headers, text: () => string, json: () => object }}
  */
 async function safeFetch(url, opts = {}) {
-  const { method = 'GET', headers = {}, body, signal, timeoutMs = 15000, attempts = 3, validateUrl } = opts;
+  const { method = 'GET', headers = {}, body, signal, attempts = 3, validateUrl } = opts;
+  let timeoutMs = opts.timeoutMs || 15000;
+  const budgetEnd = fetchDeadline.getStore();
+  if (budgetEnd) {
+    const left = budgetEnd - Date.now();
+    if (left <= 0) throw new Error(`fetch budget exhausted before ${url.slice(0, 90)}`);
+    timeoutMs = Math.min(timeoutMs, left);
+  }
   const impit = getImpit();
   const maxAttempts = Math.max(1, attempts);
   const deadline = Date.now() + timeoutMs;
@@ -242,4 +261,4 @@ function isImpitAvailable() {
   return getImpit() !== null;
 }
 
-module.exports = { safeFetch, isImpitAvailable, getImpit, MAX_REDIRECT_HOPS };
+module.exports = { safeFetch, withFetchDeadline, isImpitAvailable, getImpit, MAX_REDIRECT_HOPS };

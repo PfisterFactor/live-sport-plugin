@@ -355,8 +355,8 @@ describe('handleStream replay, language and web-stream handling', () => {
   });
 
   it('hides web streams but keeps direct and YouTube ones when webStreams is disabled', async () => {
-    fakes.cacheService = { getMatches: () => [match([{ source: 'replayzone', id: 'r' }])] };
-    provide('replayzoneProvider', [
+    fakes.cacheService = { getMatches: () => [match([{ source: 'livetv', id: 'r' }])] };
+    provide('liveTvProvider', [
       { url: 'https://cdn/a.m3u8', title: 'Direct' },
       { externalUrl: 'https://dailymotion.com/video/x', title: 'Web' },
       { ytId: 'abc123', title: 'YouTube' },
@@ -383,9 +383,8 @@ describe('handleStream replay, language and web-stream handling', () => {
   });
 
   it('labels replay parts and drops duplicate clips', async () => {
-    fakes.cacheService = { getMatches: () => [match([{ source: 'livetv', id: 'l1' }, { source: 'replayzone', id: 'r1' }])] };
+    fakes.cacheService = { getMatches: () => [match([{ source: 'livetv', id: 'l1' }, { source: 'livetv', id: 'l2' }])] };
     provide('liveTvProvider', [{ url: 'https://cdn/full.mp4', title: '1st Half (Direct)' }]);
-    provide('replayzoneProvider', [{ url: 'https://cdn/full.mp4', title: '1st Half (Direct)' }]);
     const { streams } = await handleStream('tv', 'nuvio_sport_m1');
     expect(streams).toHaveLength(1);
     expect(streams[0].title).toContain('| 🎬 1st Half');
@@ -395,12 +394,11 @@ describe('handleStream replay, language and web-stream handling', () => {
   it('resolves every part for a hub episode but only the selected part otherwise', async () => {
     const sources = [
       { source: 'livetv', id: 'p1', name: 'Part 1', url: 'u1' },
-      { source: 'replayzone', id: 'p2', name: 'Part 2', url: 'u2' },
+      { source: 'livetv', id: 'p2', name: 'Part 2', url: 'u2' },
     ];
     fakes.cacheService = { getMatches: () => [match(sources)] };
     const asked = [];
     fakes.liveTvProvider = { resolveStream: async (id) => { asked.push(id); return [{ url: `https://cdn/${id}.mp4`, title: id }]; } };
-    fakes.replayzoneProvider = { resolveStream: async (id) => { asked.push(id); return [{ url: `https://cdn/${id}.mp4`, title: id }]; } };
 
     await handleStream('series', 'nuvio_sport_m1:hub_1:2');
     expect(asked.sort()).toEqual(['p1', 'p2']);

@@ -9,7 +9,7 @@ const { extractTeamsFromTitle } = require('./services/TeamNameExtractor');
 const { filterReplayMatches, isReplayFilterDisabled } = require('./services/ReplayFilterService');
 
 // Sources whose matches qualify as replays.
-const REPLAY_SOURCES = new Set(['replayzone', 'livetv']);
+const REPLAY_SOURCES = new Set(['livetv']);
 
 const REPLAY_SPORT_IDS = ['football', 'motorsport', 'baseball', 'rugby', 'basketball', 'tennis', 'hockey', 'american_football'];
 

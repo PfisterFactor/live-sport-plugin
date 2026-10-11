@@ -6,14 +6,14 @@ const MatchAggregator = require('../../../src/services/MatchAggregator');
 // pure, so stub dependencies are sufficient.
 const agg = new MatchAggregator({});
 
-function replayZoneMatch(title, dateStr) {
+function replayMatch(title, dateStr) {
   return {
-    id: 'rz_' + title.replace(/\W+/g, '-').toLowerCase(),
+    id: 'ltv_' + title.replace(/\W+/g, '-').toLowerCase(),
     title,
     date: dateStr,
     status: 'finished',
     category: 'baseball',
-    sources: [{ source: 'replayzone', id: 'u', url: 'u' }]
+    sources: [{ source: 'livetv', id: 'u', url: 'u' }]
   };
 }
 
@@ -29,8 +29,8 @@ function streamSports99Match(title, epoch) {
 }
 
 describe('MatchAggregator date parsing', () => {
-  test('parses ISO date strings from ReplayZone into epoch ms', () => {
-    expect(agg._precompute(replayZoneMatch('A @ B', '2026-09-14')).date).toBe(Date.parse('2026-09-14'));
+  test('parses ISO date strings into epoch ms', () => {
+    expect(agg._precompute(replayMatch('A @ B', '2026-09-14')).date).toBe(Date.parse('2026-09-14'));
   });
 
   test('keeps parsing numeric epochs from other providers', () => {
@@ -55,7 +55,7 @@ describe('match merge isolation (regression)', () => {
     // replay streams from unrelated May meetings attached to it, because ISO
     // dates were collapsing to 0 and disabling the date-window guard.
     const fixture = streamSports99Match('Chicago Cubs vs Atlanta Braves', 1789495800000);
-    const mayReplay = replayZoneMatch(
+    const mayReplay = replayMatch(
       'Chicago Cubs @ Atlanta Braves Full Game Replay May 14, 2026 MLB',
       '2026-05-14'
     );
@@ -70,7 +70,7 @@ describe('match merge isolation (regression)', () => {
 
   test('replays a day apart stay separate', () => {
     const fixture = streamSports99Match('Chicago Cubs vs Atlanta Braves', 1789495800000);
-    const sep14 = replayZoneMatch('Atlanta Braves @ Chicago Cubs - MLB Full Game Replay - September 14, 2026', '2026-09-14');
+    const sep14 = replayMatch('Atlanta Braves @ Chicago Cubs - MLB Full Game Replay - September 14, 2026', '2026-09-14');
 
     const pFixture = agg._precompute(fixture);
     const pReplay = agg._precompute(sep14);
@@ -80,7 +80,7 @@ describe('match merge isolation (regression)', () => {
 
   test('the same event from two providers still merges', () => {
     const a = streamSports99Match('Chicago Cubs vs Atlanta Braves', 1789495800000);
-    const b = replayZoneMatch('Chicago Cubs vs Atlanta Braves', String(1789495800000));
+    const b = replayMatch('Chicago Cubs vs Atlanta Braves', String(1789495800000));
 
     const pa = agg._precompute(a);
     const pb = agg._precompute(b);

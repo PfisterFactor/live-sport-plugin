@@ -1,5 +1,6 @@
 const { parseTimezone } = require('../timezone');
 const { extractTeamsFromTitle } = require('./TeamNameExtractor');
+const { withFetchDeadline } = require('../impitClient');
 
 // ─── Fuzzy Match Helpers ────────────────────────────────────────────────────
 
@@ -115,9 +116,12 @@ function _tryExtractTeams(title) {
   return null;
 }
 
-const REPLAY_SOURCE_IDS = new Set(['replayzone', 'livetv']);
+const REPLAY_SOURCE_IDS = new Set(['livetv']);
 const REPLAY_RETENTION_DAYS = 21;
 const REPLAY_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const DAY_MS = 24 * 3600 * 1000;
+const ARCHIVE_REPLAY_AGE_MS = 3 * DAY_MS;
+const MERGE_YIELD_EVERY = 250;
 const CARRY_FORWARD_PROVIDERS = ['dlive'];
 const CARRY_FORWARD_MAX = Number(process.env.CARRY_FORWARD_MAX || 400);
 const CARRY_FORWARD_RETENTION_MS = 24 * 3600 * 1000;
@@ -125,7 +129,7 @@ const MOTORSPORT_GENERIC_TOKENS = new Set(['grandprix', 'gp', 'formulaone', 'f1'
 
 /**
  * Parses a provider match date into epoch milliseconds, 0 when unusable.
- * ISO strings (ReplayZone sends "2026-09-14") go through the shared timezone
+ * ISO strings (e.g. "2026-09-14") go through the shared timezone
  * parser so they read as UTC regardless of the host zone; a plain Number() cast
  * would yield NaN and silently disable the 24h merge guard, merging the same
  * fixture on different days. The "0" sentinel (24/7 channels) is never a date.
@@ -168,25 +172,36 @@ function _isGrandPrix(tokens) {
 // their own errors, so a dead upstream shows up as a hang, not a rejection:
 // without this the whole sync waits for the slowest failing origin.
 const PROVIDER_SYNC_TIMEOUT_MS = parseInt(process.env.PROVIDER_SYNC_TIMEOUT_MS, 10) || 8000;
+// Fetches stop this long before the provider's budget so it still has time to
+// parse what it got.
+const FETCH_MARGIN_MS = 500;
 
 /**
- * Resolves the provider's matches, or `[]` once the budget elapses. The
- * provider promise is left running; it only loses the race.
+ * Resolves the provider's matches, or `[]` once its budget elapses. A provider
+ * may set `syncTimeoutMs` to replace the default budget. Every safeFetch the
+ * provider starts is clamped to the budget, so a stalled impit still leaves
+ * time for the undici fallback. The provider promise is left running; it only
+ * loses the race. `onTimeout` receives the provider name.
  */
-function withSyncDeadline(provider) {
+function withSyncDeadline(provider, onTimeout) {
+  const budgetMs = provider.syncTimeoutMs || PROVIDER_SYNC_TIMEOUT_MS;
+  const name = provider.name || 'provider';
   let timer;
   const deadline = new Promise((resolve) => {
     timer = setTimeout(() => {
-      console.warn(`[MatchAggregator] ${provider.name || 'provider'} exceeded ${PROVIDER_SYNC_TIMEOUT_MS}ms, skipping this sync.`);
+      console.warn(`[MatchAggregator] ${name} exceeded ${budgetMs}ms, skipping this sync.`);
+      if (onTimeout) onTimeout(name);
       resolve([]);
-    }, PROVIDER_SYNC_TIMEOUT_MS);
+    }, budgetMs);
   });
-  return Promise.race([provider.getMatches(), deadline]).finally(() => clearTimeout(timer));
+  const fetchEnd = Date.now() + Math.max(budgetMs - FETCH_MARGIN_MS, 1);
+  const run = withFetchDeadline(fetchEnd, () => Promise.resolve().then(() => provider.getMatches()));
+  return Promise.race([run, deadline]).finally(() => clearTimeout(timer));
 }
 
 class MatchAggregator {
-  constructor({ streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, ppvProvider, streamCornerProvider, zliveProvider, dliveProvider, replayZoneProvider, liveTvProvider, damiTvProvider, cacheService }) {
-    this.providers = [streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, ppvProvider, streamCornerProvider, zliveProvider, dliveProvider, replayZoneProvider, liveTvProvider, damiTvProvider]
+  constructor({ streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, ppvProvider, streamCornerProvider, zliveProvider, dliveProvider, liveTvProvider, damiTvProvider, cacheService }) {
+    this.providers = [streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, ppvProvider, streamCornerProvider, zliveProvider, dliveProvider, liveTvProvider, damiTvProvider]
       .filter(p => p && typeof p.getMatches === 'function');
     this.cacheService = cacheService;
   }
@@ -299,22 +314,76 @@ class MatchAggregator {
     console.log('[MatchAggregator] Fetching from all providers...');
     const finalMatches = [];
     const finalPres = []; // precomputed identity for each accepted match
+    const scanIdx = [];
+    const undatedIdx = [];
+    const idIndex = new Map();
+    const dayBuckets = new Map();
+    const archiveCutoff = Date.now() - ARCHIVE_REPLAY_AGE_MS;
 
-    const processProviderMatches = (providerMatches) => {
+    const addTo = (map, key, i) => {
+      const list = map.get(key);
+      if (list) list.push(i);
+      else map.set(key, [i]);
+    };
+    const indexDate = (i) => {
+      const date = finalPres[i].date;
+      if (date) addTo(dayBuckets, Math.floor(date / DAY_MS), i);
+    };
+    const reindex = (i) => {
+      const p = finalPres[i];
+      indexDate(i);
+      if (!p.date) undatedIdx.push(i);
+      if (p.id) addTo(idIndex, p.id, i);
+    };
+
+    // _sameEventPre rejects dated pairs more than 24h apart unless their ids are
+    // equal, so a dated match only needs the same id, entries from day-1..day+1
+    // and undated entries. Archived replays also skip undated entries, which are
+    // 24/7 channels that would otherwise absorb old fixtures by token overlap.
+    const findDatedMatch = (pre, includeUndated) => {
+      const day = Math.floor(pre.date / DAY_MS);
+      let best = -1;
+      const consider = (list) => {
+        if (!list) return;
+        for (const i of list) {
+          if (best !== -1 && i >= best) continue;
+          if (this._sameEventPre(finalPres[i], pre)) best = i;
+        }
+      };
+      consider(idIndex.get(pre.id));
+      for (let d = day - 1; d <= day + 1; d++) consider(dayBuckets.get(d));
+      if (includeUndated) consider(undatedIdx);
+      return best;
+    };
+
+    let processed = 0;
+    const processProviderMatches = async (providerMatches) => {
       if (!providerMatches || !Array.isArray(providerMatches)) return;
-      providerMatches.forEach(match => {
-        if (!match.id || !match.title) return;
+      for (const match of providerMatches) {
+        if (++processed % MERGE_YIELD_EVERY === 0) await new Promise(resolve => setImmediate(resolve));
+        if (!match.id || !match.title) continue;
 
         const pre = this._precompute(match);
+        const archived = pre.date > 0 && pre.date < archiveCutoff
+          && Array.isArray(match.sources) && match.sources.some(s => s && REPLAY_SOURCE_IDS.has(s.source));
         let idx = -1;
-        for (let i = 0; i < finalMatches.length; i++) {
-          if (this._sameEventPre(finalPres[i], pre)) { idx = i; break; }
+        if (pre.date > 0) {
+          idx = findDatedMatch(pre, !archived);
+        } else {
+          for (const i of scanIdx) {
+            if (this._sameEventPre(finalPres[i], pre)) { idx = i; break; }
+          }
         }
 
         if (idx === -1) {
+          const i = finalMatches.length;
           finalMatches.push(match);
           finalPres.push(pre);
-          return;
+          if (!archived) scanIdx.push(i);
+          if (!pre.date) undatedIdx.push(i);
+          if (pre.id) addTo(idIndex, pre.id, i);
+          indexDate(i);
+          continue;
         }
 
         const existing = finalMatches[idx];
@@ -358,6 +427,7 @@ class MatchAggregator {
         if (incomingDateMs > 0 && (existingDateMs <= 0 || (match.sources && match.sources.some(s => s && s.source === 'streamedpk')))) {
           existing.date = match.date;
           finalPres[idx].date = incomingDateMs;
+          indexDate(idx);
         }
 
         // Canonical naming: prefer a team-vs-team fixture title over a
@@ -367,8 +437,9 @@ class MatchAggregator {
           existing.title = match.title;
           existing._titleIsFixture = true;
           finalPres[idx] = pre;
+          reindex(idx);
         }
-      });
+      }
     };
 
     // Providers swallow their own errors and return []. A non-empty result is the
@@ -387,36 +458,40 @@ class MatchAggregator {
     const replayFresh = previousReplays.length > 0 && !!this.lastReplaySync && (Date.now() - this.lastReplaySync < REPLAY_SYNC_INTERVAL_MS);
 
     if (replayFresh) {
-      processProviderMatches(previousReplays);
+      await processProviderMatches(previousReplays);
       anyProviderSucceeded = true;
     } else {
       this.lastReplaySync = Date.now();
     }
 
     const providersToQuery = this.providers.filter(p => !(replayFresh && REPLAY_SOURCE_IDS.has(p.sourceName)));
+    const timedOut = [];
+    const onTimeout = (name) => timedOut.push(name);
+    this.lastSyncTimedOut = timedOut;
 
     if (process.env.LOW_MEMORY_MODE === 'true') {
       // Memory-safe sequential fetching (Alwaysdata)
       for (const p of providersToQuery) {
         try {
-          const providerMatches = await withSyncDeadline(p);
+          const providerMatches = await withSyncDeadline(p, onTimeout);
           if (Array.isArray(providerMatches) && providerMatches.length > 0) anyProviderSucceeded = true;
-          processProviderMatches(providerMatches);
+          await processProviderMatches(providerMatches);
         } catch (err) {
           console.error(`[MatchAggregator] Provider fetch failed:`, err.message);
         }
       }
     } else {
       // Fast parallel fetching (Render / Local)
-      const results = await Promise.allSettled(providersToQuery.map(p => withSyncDeadline(p)));
-      results.forEach((promiseResult, index) => {
+      const results = await Promise.allSettled(providersToQuery.map(p => withSyncDeadline(p, onTimeout)));
+      for (let index = 0; index < results.length; index++) {
+        const promiseResult = results[index];
         if (promiseResult.status === 'fulfilled') {
           if (Array.isArray(promiseResult.value) && promiseResult.value.length > 0) anyProviderSucceeded = true;
-          processProviderMatches(promiseResult.value);
+          await processProviderMatches(promiseResult.value);
         } else {
           console.error(`[MatchAggregator] Provider ${providersToQuery[index].name || index} failed:`, promiseResult.reason);
         }
-      });
+      }
     }
 
     const now = Date.now();

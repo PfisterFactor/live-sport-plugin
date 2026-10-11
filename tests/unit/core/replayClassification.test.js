@@ -15,7 +15,7 @@ const finishedMatch = (overrides = {}) => ({
   league: 'MLB',
   date: String(NOW - 5 * HOUR),
   status: 'finished',
-  sources: [{ source: 'replayzone', id: 'https://ok.ru/videoembed/1', url: 'https://ok.ru/videoembed/1' }],
+  sources: [{ source: 'livetv', id: 'https://ok.ru/videoembed/1', url: 'https://ok.ru/videoembed/1' }],
   ...overrides
 });
 

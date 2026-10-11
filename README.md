@@ -113,7 +113,7 @@ bunx pm2 startup
 ## ✨ Key Features
 
 - **🏟️ Multi-Source Live Aggregator:** Concurrently scrapes and unifies live fixtures and 24/7 channels from many scrapers (Streamed.pk, StreamFree, WatchFooty, SportyHunter, TimStreams, StreamSports99, Streamic, CDNLiveTV, PPV.st, StreamCorner, Zlive, DaddyLive (dlive.sx), DamiTV) into a deduplicated catalog with merged stream choices. Streamed.pk falls back to the tvapp1.pk API mirror when its own API is unreachable.
-- **⏪ Replays:** LiveTV and ReplayZone feed a 21-day replay archive with an all-sports replay catalog and one replay row per sport. The `/configure` page can show all replays, only mainstream competitions, or hide replays.
+- **⏪ Replays:** LiveTV feeds a 21-day replay archive with an all-sports replay catalog and one replay row per sport. The `/configure` page can show all replays, only mainstream competitions, or hide replays.
 - **🛡️ Outbound URL Guard:** The image, manifest and embed proxies refuse loopback, private, link-local and metadata addresses, including after DNS resolution and on every redirect hop.
 - **⚡ Coalescing Zero-Lag HLS Manifest Proxy (`/api/manifest`):** High-speed HLS proxy powered by `impit` with persistent keep-alive connections. Coalesces concurrent in-flight upstream requests (`manifestInFlight`) to eliminate duplicate fetches during live player segment polls and prevent ISP/upstream throttling.
 - **🔐 Native WebAssembly (WASM) Decryption:** Executes native WebAssembly binaries (`stream-lock.wasm`, `gasm.wasm`, `lock.wasm`) directly in Node.js to decrypt obfuscated tokens and unlock protected third-party stream endpoints.

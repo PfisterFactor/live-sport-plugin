@@ -27,7 +27,7 @@ const replay = (over = {}) => ({
   status: 'finished',
   popular: '0',
   league: 'Premier League',
-  sources: [{ source: 'replayzone', id: 'u1', url: 'u1' }],
+  sources: [{ source: 'livetv', id: 'u1', url: 'u1' }],
   team1: null,
   team2: null,
   ...over
@@ -86,7 +86,7 @@ describe('replay catalogs', () => {
     matches = [
       replay({ id: 'ok' }),
       replay({ id: 'vod', sources: [{ source: 'timstreams', id: 'v' }] }),
-      replay({ id: 'both', sources: [{ source: 'replayzone', id: 'a' }, { source: 'timstreams', id: 'b' }] }),
+      replay({ id: 'both', sources: [{ source: 'livetv', id: 'a' }, { source: 'timstreams', id: 'b' }] }),
       replay({ id: 'liveprov', sources: [{ source: 'streamedpk', id: 'c' }] })
     ];
     expect(ids(await handleCatalog('tv', 'nuvio_sports_replays', {}, {}))).toEqual(['ok']);

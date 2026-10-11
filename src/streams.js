@@ -28,7 +28,6 @@ const SOURCES = {
   streamedpk: { priority: 1.5, registration: 'streamedPkProvider', label: 'Streamed.pk', defaultEnabled: true, passSrc: true, referer: 'https://embed.st/' },
   streamcorner: { priority: 6, registration: 'streamCornerProvider', label: 'StreamCorner', defaultEnabled: true, referer: 'https://streamcorner.st/' },
   zlive: { priority: 7, registration: 'zliveProvider', label: 'ZLive', defaultEnabled: true, passSrc: true },
-  replayzone: { priority: 2, registration: 'replayzoneProvider', label: 'ReplayZone', defaultEnabled: true, passSrc: true },
   livetv: { priority: 2, registration: 'liveTvProvider', label: 'LiveTV', defaultEnabled: true, passSrc: true },
   damitv: { priority: 3, registration: 'damiTvProvider', label: 'DamiTV', defaultEnabled: true, passSrc: true, referer: 'https://damitv.st/' },
   dlive: { priority: 10, registration: 'dliveProvider', label: 'DaddyLive', defaultEnabled: true, passSrc: true, referer: 'https://dlive.sx/' },

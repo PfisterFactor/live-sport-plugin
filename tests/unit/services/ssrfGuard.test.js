@@ -72,7 +72,7 @@ describe('OutboundUrlGuard — blocked targets', () => {
 describe('OutboundUrlGuard — permitted targets', () => {
   test.each([
     ['example.com', 'http://example.com/'],
-    ['ok.ru (ReplayZone MP4 CDN)', 'https://ok.ru/video/123'],
+    ['ok.ru (replay MP4 CDN)', 'https://ok.ru/video/123'],
     ['cdn.jsdelivr.net (poster/img host)', 'https://cdn.jsdelivr.net/gh/tv-logo/tv-logos@main/x.png'],
   ])('%s is permitted', async (_label, url) => {
     const verdict = await checkOutboundUrl(url, { resolve: publicResolver });
