@@ -84,6 +84,15 @@ class StreamCornerProvider extends BaseProvider {
       const sources = (ev && ev.streams) || [];
 
       for (const s of sources) {
+        if (s && !s.stream_url && s.embed_url) {
+          const label = s.source_name ? `${matchTitle} (${s.source_name})` : matchTitle;
+          streams.push(new StreamEntity({
+            name: this.name,
+            title: `${label} (Web Player)`,
+            externalUrl: `/watch?url=${encodeURIComponent(s.embed_url)}&title=${encodeURIComponent(matchTitle || 'Live Event')}`,
+          }));
+          continue;
+        }
         if (!s || !s.stream_url) continue;
         // Upstream serves CENC-encrypted DASH manifests that Stremio cannot
         // play; only HLS manifests are surfaced as direct streams.
