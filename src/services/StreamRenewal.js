@@ -29,6 +29,7 @@ const RENEWERS = {
   embedst: (embedUrl) => container.resolve('embedStProvider').extractM3u8(embedUrl),
   embedindia: (embedUrl) => container.resolve('embedIndiaProvider').extractM3u8(embedUrl),
   dlive: (embedUrl) => container.resolve('dliveProvider').extractM3u8(embedUrl),
+  streameast: (embedUrl) => container.resolve('streamEastProvider').extractM3u8(embedUrl),
   streamfree: (embedUrl, deadUrl) => container.resolve('streamFreeProvider').refreshSignedUrl(embedUrl, deadUrl),
   sportsembed: async (embedUrl) => {
     const { extractSportsEmbed } = require('../providers/SportsEmbedExtractor');

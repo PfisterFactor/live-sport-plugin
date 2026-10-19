@@ -641,6 +641,7 @@ class DliveProvider extends BaseProvider {
 DliveProvider.MAX_CHANNELS = 4;
 
 DliveProvider.resolveSyncTimeoutMs = resolveSyncTimeoutMs;
+DliveProvider.decodeHtmlEntities = decodeHtmlEntities;
 
 /** Embed->embed hops followed before giving up (streame.center needs two). */
 DliveProvider.MAX_EMBED_DEPTH = 2;

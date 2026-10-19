@@ -31,6 +31,7 @@ const SOURCES = {
   livetv: { priority: 2, registration: 'liveTvProvider', label: 'LiveTV', defaultEnabled: true, passSrc: true },
   damitv: { priority: 3, registration: 'damiTvProvider', label: 'DamiTV', defaultEnabled: true, passSrc: true, referer: 'https://damitv.st/' },
   dlive: { priority: 10, registration: 'dliveProvider', label: 'DaddyLive', defaultEnabled: true, passSrc: true, referer: 'https://dlive.sx/' },
+  streameast: { priority: 7, registration: 'streamEastProvider', label: 'StreamEast', defaultEnabled: true },
 };
 
 // Unknown sources are likely new Streamed.pk sub-sources - 1.5 keeps them near the top.

@@ -19,6 +19,7 @@ const ZliveProvider = require('./providers/ZliveProvider');
 const DliveProvider = require('./providers/DliveProvider');
 const StreamedPkProvider = require('./providers/StreamedPkProvider');
 const DamiTvProvider = require('./providers/DamiTvProvider');
+const StreamEastProvider = require('./providers/StreamEastProvider');
 const LiveTVProvider = require('./providers/LiveTVProvider');
 const IframeDomainRegistry = require('./services/IframeDomainRegistry');
 
@@ -46,6 +47,7 @@ const registrations = {
   iframeDomainRegistry: () => new IframeDomainRegistry(),
   dliveProvider: (c) => new DliveProvider(c),
   damiTvProvider: (c) => new DamiTvProvider(c),
+  streamEastProvider: (c) => new StreamEastProvider(c),
   liveTvProvider: (c) => new LiveTVProvider(c),
 };
 
