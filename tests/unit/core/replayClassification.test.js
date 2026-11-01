@@ -26,7 +26,7 @@ const upcomingMatch = (overrides = {}) => ({
   league: 'Premier League',
   date: String(NOW + 6 * HOUR),
   status: 'upcoming',
-  sources: [{ source: 'watchfooty', id: 'x', url: 'https://example.com/x' }],
+  sources: [{ source: 'cdnlive', id: 'x', url: 'https://example.com/x' }],
   ...overrides
 });
 
@@ -66,7 +66,7 @@ describe('isReplayMatch', () => {
   });
 
   it('only counts replay-capable providers; live providers never produce replays', () => {
-    for (const source of ['streamedpk', 'dlive', 'streamsports99', 'watchfooty']) {
+    for (const source of ['ppv', 'dlive', 'streamsports99', 'cdnlive']) {
       expect(isReplayMatch(finishedMatch({ sources: [{ source, id: '1' }] }))).toBe(false);
     }
   });

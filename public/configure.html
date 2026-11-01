@@ -328,16 +328,7 @@
 
     <div class="section">
       <h3>Streaming Sources</h3>
-      <div class="sports-grid" id="sourcesGrid">
-        <label class="checkbox-label active"><input type="checkbox" value="streamfree" checked> 🌐 StreamFree</label>
-        <label class="checkbox-label active"><input type="checkbox" value="timstreams" checked> 📺 TimStreams</label>
-        <label class="checkbox-label active"><input type="checkbox" value="streamedpk" checked> 📺 Streamed.pk</label>
-        <label class="checkbox-label active"><input type="checkbox" value="sportyhunter" checked> 📺 SportyHunter</label>
-        <label class="checkbox-label active"><input type="checkbox" value="watchfooty" checked> 📺 WatchFooty</label>
-        <label class="checkbox-label active"><input type="checkbox" value="cdnlive" checked> 📺 CDNLiveTV</label>
-        <label class="checkbox-label active"><input type="checkbox" value="streamsports99" checked> 📺 StreamSports99</label>
-        <label class="checkbox-label active"><input type="checkbox" value="streamic" checked> 🌐 Streamic</label>
-      </div>
+      <div class="sports-grid" id="sourcesGrid"></div>
     </div>
 
     <a href="#" id="installBtn" class="btn">INSTALL ADDON</a>
@@ -396,7 +387,8 @@
     const copyBtn = document.getElementById('copyBtn');
     const input = document.getElementById('teams');
     const checkboxes = document.querySelectorAll('#sportsGrid input[type="checkbox"]');
-    const sourceCheckboxes = document.querySelectorAll('#sourcesGrid input[type="checkbox"]');
+    let sourceCheckboxes = [];
+    let defaultSources = [];
     const timezoneSelect = document.getElementById('timezone');
     const languagesInput = document.getElementById('languages');
     const replayFilterSelect = document.getElementById('replayFilter');
@@ -498,16 +490,40 @@
       webStreamsSelect.value = 'disabled';
     }
 
+    /** Builds one checkbox per stream source and applies any saved selection. */
+    function renderSources(sources) {
+      const grid = document.getElementById('sourcesGrid');
+      defaultSources = sources.filter(s => s.defaultEnabled).map(s => s.id);
+      const saved = existingConfig.sources;
+      const savedList = saved && saved !== 'none' && saved !== 'all' ? saved.split(',') : null;
+      sourceCheckboxes = sources.map(s => {
+        const label = document.createElement('label');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = s.id;
+        cb.checked = saved === 'none' ? false : savedList ? savedList.includes(s.id) : s.defaultEnabled;
+        label.className = 'checkbox-label' + (cb.checked ? ' active' : '');
+        label.append(cb, ' ' + s.label);
+        grid.appendChild(label);
+        cb.addEventListener('change', onCheckboxChange);
+        return cb;
+      });
+      updateLink();
+    }
+
     fetch('/api/options')
       .then(res => (res.ok ? res.json() : null))
       .then(options => {
-        if (!options || !Array.isArray(options.languages)) return;
-        const list = document.getElementById('languageOptions');
-        options.languages.forEach(language => {
-          const option = document.createElement('option');
-          option.value = language;
-          list.appendChild(option);
-        });
+        if (!options) return;
+        if (Array.isArray(options.languages)) {
+          const list = document.getElementById('languageOptions');
+          options.languages.forEach(language => {
+            const option = document.createElement('option');
+            option.value = language;
+            list.appendChild(option);
+          });
+        }
+        if (Array.isArray(options.sources)) renderSources(options.sources);
       })
       .catch(() => {});
     if (existingConfig.sports) {
@@ -517,19 +533,6 @@
         const sports = existingConfig.sports.split(',');
         checkboxes.forEach(cb => {
           cb.checked = sports.includes(cb.value);
-          if (cb.checked) cb.closest('.checkbox-label').classList.add('active');
-          else cb.closest('.checkbox-label').classList.remove('active');
-        });
-      }
-    }
-
-    if (existingConfig.sources) {
-      if (existingConfig.sources === 'none') {
-        sourceCheckboxes.forEach(cb => { cb.checked = false; cb.closest('.checkbox-label').classList.remove('active'); });
-      } else if (existingConfig.sources !== 'all') {
-        const sources = existingConfig.sources.split(',');
-        sourceCheckboxes.forEach(cb => {
-          cb.checked = sources.includes(cb.value);
           if (cb.checked) cb.closest('.checkbox-label').classList.add('active');
           else cb.closest('.checkbox-label').classList.remove('active');
         });
@@ -564,7 +567,9 @@
         if (config.sports === '') config.sports = 'none';
       }
 
-      if (selectedSources.length < sourceCheckboxes.length) {
+      const sameAsDefaults = selectedSources.length === defaultSources.length
+        && selectedSources.every(id => defaultSources.includes(id));
+      if (sourceCheckboxes.length > 0 && !sameAsDefaults) {
         config.sources = selectedSources.join(',');
         if (config.sources === '') config.sources = 'none';
       }
@@ -598,14 +603,14 @@
     replayFilterSelect.addEventListener('change', updateLink);
     webStreamsSelect.addEventListener('change', updateLink);
     timezoneSelect.addEventListener('change', updateLink);
-    [...checkboxes, ...sourceCheckboxes].forEach(cb => {
-      cb.addEventListener('change', (e) => {
-        const label = e.target.closest('.checkbox-label');
-        if (e.target.checked) label.classList.add('active');
-        else label.classList.remove('active');
-        updateLink();
-      });
-    });
+    /** Mirrors a checkbox's state onto its label and refreshes the install link. */
+    function onCheckboxChange(e) {
+      const label = e.target.closest('.checkbox-label');
+      if (e.target.checked) label.classList.add('active');
+      else label.classList.remove('active');
+      updateLink();
+    }
+    checkboxes.forEach(cb => cb.addEventListener('change', onCheckboxChange));
     
     updateLink();
   </script>

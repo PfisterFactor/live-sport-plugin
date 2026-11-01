@@ -6,26 +6,24 @@
  * Answers one question, offline and deterministically: "is this event a
  * mainstream fixture, a minor / lower-division fixture, or neither?"
  *
- * Why this exists: `popular` cannot separate the two. Streamed.pk flags ~76 of
- * its ~98 events as `popular: true`, and it exposes no `league` field at all,
- * so a second-division fixture and a Champions League tie arrive looking
- * identical to the catalog comparator. The catalog therefore needs a signal of
- * its own, derived from the text the providers already give us.
+ * Why this exists: `popular` cannot separate the two, and many providers expose
+ * no `league` field at all, so a second-division fixture and a Champions League
+ * tie arrive looking identical to the catalog comparator. The catalog therefore
+ * needs a signal of its own, derived from the text the providers already give us.
  *
  * The classifier is pure: no I/O, no clock, no randomness, no dependencies. It
- * only reads `league`, `title`, `team1.name`, `team2.name`, `category` and
- * `sources`. Every keyword list below is data, so extending the classifier is a
+ * only reads `league`, `title`, `team1.name`, `team2.name` and `category`.
+ * Every keyword list below is data, so extending the classifier is a
  * one-line edit rather than a code change.
  *
  * Three tiers, lower sorts first:
- *   MAINSTREAM (0) - top-tier competition / globally famous club / mainline
- *                    source / category that is major-league by construction
+ *   MAINSTREAM (0) - top-tier competition / globally famous club /
+ *                    category that is major-league by construction
  *   NEUTRAL    (1) - no signal either way; leave the existing ordering alone
  *   MINOR      (2) - explicit lower-division, reserve/youth or regional marker
  *
- * MINOR deliberately beats MAINSTREAM for the same event: Streamed.pk does
- * carry a handful of second-tier fixtures, and a merged event can pick up a
- * Streamed.pk stream while its `league` still says "La Liga 2".
+ * MINOR deliberately beats MAINSTREAM for the same event: a famous club's
+ * reserve or lower-division side must not rank as mainstream.
  */
 
 // Lower tier value = higher priority in the comparator.
@@ -121,13 +119,6 @@ const FAMOUS_CLUBS = [
   'al hilal', 'al nassr', 'al ittihad', 'boca juniors', 'river plate', 'flamengo',
   'palmeiras', 'corinthians', 'santos', 'sao paulo', 'gremio', 'inter miami', 'la galaxy'
 ];
-
-/**
- * Sources that carry mainstream fixtures. Streamed.pk is the only provider the
- * user identified as supplying them; DaddyLive and StreamSports99 mix
- * mainstream with local content, so they are judged on league/title instead.
- */
-const MAINSTREAM_SOURCE_IDS = new Set(['streamedpk']);
 
 /**
  * Categories that are major-league by construction: the overwhelming majority
@@ -328,12 +319,6 @@ function isLowerDivisionFixture(match) {
   return false;
 }
 
-/** True when the event streams from a source known to carry mainstream fixtures. */
-function hasMainstreamSource(match) {
-  if (!match || !Array.isArray(match.sources)) return false;
-  return match.sources.some(s => s && MAINSTREAM_SOURCE_IDS.has(String(s.source || '').toLowerCase()));
-}
-
 /** True when the category is a major league by construction. */
 function isMajorLeagueCategory(match) {
   if (!match || !match.category) return false;
@@ -346,7 +331,7 @@ function isMajorLeagueCategory(match) {
  * mis-ranked.
  *
  * Demotion is evaluated first and unconditionally: a lower-division event stays
- * MINOR even when it has a Streamed.pk source or a famous club in the title.
+ * MINOR even when it has a famous club in the title.
  */
 function getMatchTier(match) {
   if (!match || typeof match !== 'object') return TIER.NEUTRAL;
@@ -354,7 +339,6 @@ function getMatchTier(match) {
   const haystack = buildHaystack(match);
   if (haystack && isLowerDivisionFixture(match)) return TIER.MINOR;
 
-  if (hasMainstreamSource(match)) return TIER.MAINSTREAM;
   if (matchesAny(TOP_TIER_COMPETITIONS, haystack)) return TIER.MAINSTREAM;
   if (haystack && FAMOUS_CLUB_PATTERN.test(haystack)) return TIER.MAINSTREAM;
   if (isMajorLeagueCategory(match)) return TIER.MAINSTREAM;
@@ -367,7 +351,6 @@ function explainMatch(match) {
   if (!match || typeof match !== 'object') return 'not-a-match';
   const haystack = buildHaystack(match);
   if (haystack && isLowerDivisionFixture(match)) return 'lower-division-marker';
-  if (hasMainstreamSource(match)) return 'mainstream-source';
   if (matchesAny(TOP_TIER_COMPETITIONS, haystack)) return 'top-tier-competition';
   if (haystack && FAMOUS_CLUB_PATTERN.test(haystack)) return 'famous-club';
   if (isMajorLeagueCategory(match)) return 'major-league-category';
@@ -378,7 +361,6 @@ module.exports = {
   TIER,
   getMatchTier,
   isLowerDivisionFixture,
-  hasMainstreamSource,
   isMajorLeagueCategory,
   explainMatch,
   // Exported for inspection and tests. The pattern lists are not global
@@ -386,7 +368,6 @@ module.exports = {
   TOP_TIER_COMPETITIONS,
   FAMOUS_CLUBS,
   MAJOR_LEAGUE_CATEGORIES,
-  MAINSTREAM_SOURCE_IDS,
   LOWER_DIVISION_MARKERS,
   RESERVE_YOUTH_MARKERS,
   SPORT_SECONDARY_MARKERS,

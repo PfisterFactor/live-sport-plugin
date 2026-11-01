@@ -27,6 +27,12 @@ function withFetchDeadline(deadlineAt, fn) {
   return fetchDeadline.run(deadlineAt, fn);
 }
 
+/**
+ * User-Agent matching the impit TLS fingerprint below; keep the Chrome major
+ * versions in step. Some CDNs (DaddyLive's) refuse older Chrome builds.
+ */
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+
 // -- Singleton -----------------------------------------------------------------
 // One long-lived instance: every new Impit spawns its own tokio runtime, and
 // recycling them accumulates worker threads faster than it frees TLS caches.
@@ -261,4 +267,4 @@ function isImpitAvailable() {
   return getImpit() !== null;
 }
 
-module.exports = { safeFetch, withFetchDeadline, isImpitAvailable, getImpit, MAX_REDIRECT_HOPS };
+module.exports = { safeFetch, withFetchDeadline, isImpitAvailable, getImpit, MAX_REDIRECT_HOPS, BROWSER_UA };

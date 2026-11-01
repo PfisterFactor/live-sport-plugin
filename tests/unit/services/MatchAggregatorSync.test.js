@@ -81,7 +81,7 @@ describe('syncMatches merge bookkeeping', () => {
     const cache = new CacheService();
     const agg = new MatchAggregator({
       streamFreeProvider: provider([match({ id: 'a1', title: 'Ohio State vs Michigan', category: 'american_football' })]),
-      timStreamsProvider: provider([match({ id: 'b1', title: 'Ohio State vs Michigan', category: 'college', score: '7:3', aliasIds: ['b0'] })]),
+      ppvProvider: provider([match({ id: 'b1', title: 'Ohio State vs Michigan', category: 'college', score: '7:3', aliasIds: ['b0'] })]),
       cacheService: cache
     });
     const [m] = await agg.syncMatches();
@@ -95,23 +95,11 @@ describe('syncMatches merge bookkeeping', () => {
     const t = NOW.getTime() + 2 * H;
     const agg = new MatchAggregator({
       streamFreeProvider: provider([match({ id: 'a1', title: 'Arsenal vs Chelsea', date: '' })]),
-      timStreamsProvider: provider([match({ id: 'b1', title: 'Arsenal vs Chelsea', date: String(t) })]),
+      ppvProvider: provider([match({ id: 'b1', title: 'Arsenal vs Chelsea', date: String(t) })]),
       cacheService: new CacheService()
     });
     const [m] = await agg.syncMatches();
     expect(m.date).toBe(String(t));
-  });
-
-  it("prefers StreamedPk's precise kickoff over a coarse one", async () => {
-    const coarse = NOW.getTime() + 2 * H;
-    const precise = coarse + 20 * 60 * 1000;
-    const agg = new MatchAggregator({
-      streamFreeProvider: provider([match({ id: 'a1', title: 'Arsenal vs Chelsea', date: String(coarse) })]),
-      streamedPkProvider: provider([match({ id: 'b1', title: 'Arsenal vs Chelsea', date: String(precise), sources: [src('streamedpk', 'b1')] })]),
-      cacheService: new CacheService()
-    });
-    const [m] = await agg.syncMatches();
-    expect(m.date).toBe(String(precise));
   });
 
   it('backfills competitors from a head-to-head title', async () => {
@@ -219,14 +207,14 @@ describe('syncMatches archived replays', () => {
 
   it('does not fold an old replay into a 24/7 channel that shares a word', async () => {
     const agg = new MatchAggregator({
-      streamedPkProvider: provider([match({ id: 'chan', title: 'Fox League', category: 'networks', date: '', sources: [src('streamedpk', 'chan')] })]),
+      zliveProvider: provider([match({ id: 'chan', title: 'Fox League', category: 'networks', date: '', sources: [src('zlive', 'chan')] })]),
       liveTvProvider: provider([replay('r1', 'Koelner Haie - Herning Blue Fox')]),
       cacheService: new CacheService()
     });
     const out = await agg.syncMatches();
     const chan = out.find(m => m.id === 'chan');
     expect(chan.title).toBe('Fox League');
-    expect(chan.sources.map(s => s.source)).toEqual(['streamedpk']);
+    expect(chan.sources.map(s => s.source)).toEqual(['zlive']);
     expect(out.some(m => m.id === 'r1')).toBe(true);
   });
 
@@ -248,11 +236,11 @@ describe('syncMatches provider budget', () => {
   it('records providers that missed their budget and keeps the ones that answered', async () => {
     const agg = new MatchAggregator({
       streamFreeProvider: provider([match({ id: 'x', title: 'E vs F' })]),
-      watchFootyProvider: { name: 'WatchFooty', syncTimeoutMs: 50, getMatches: () => new Promise(() => {}) },
+      streamCornerProvider: { name: 'StreamCorner', syncTimeoutMs: 50, getMatches: () => new Promise(() => {}) },
       cacheService: new CacheService()
     });
     const out = await agg.syncMatches();
     expect(out.map(m => m.id)).toEqual(['x']);
-    expect(agg.lastSyncTimedOut).toEqual(['WatchFooty']);
+    expect(agg.lastSyncTimedOut).toEqual(['StreamCorner']);
   });
 });

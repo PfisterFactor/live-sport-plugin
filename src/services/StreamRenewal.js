@@ -2,8 +2,8 @@
  * StreamRenewal.js — re-mints expiring signed manifest URLs.
  *
  * Every source signs its manifest URL with a lifetime measured from the mint,
- * not from the end of the event (TimStreams ~2.5 h, WatchFooty ~5.9 h,
- * StreamFree ~7.9 h). The URL handed to the player is immutable, so without
+ * not from the end of the event (StreamFree ~7.9 h). The URL handed to the
+ * player is immutable, so without
  * renewal a long event dies mid-stream and only a manual restart recovers it.
  *
  * The manifest proxy carries a renewal descriptor (source + embed page URL) on
@@ -25,17 +25,10 @@ const MAX_ENTRY_AGE_MS = 12 * 60 * 60 * 1000;
  * { m3u8, referer } or null. Providers are resolved lazily to avoid a cycle.
  */
 const RENEWERS = {
-  timstreams: (embedUrl) => container.resolve('timStreamsProvider').extractM3u8(embedUrl),
-  embedst: (embedUrl) => container.resolve('embedStProvider').extractM3u8(embedUrl),
   embedindia: (embedUrl) => container.resolve('embedIndiaProvider').extractM3u8(embedUrl),
   dlive: (embedUrl) => container.resolve('dliveProvider').extractM3u8(embedUrl),
   streameast: (embedUrl) => container.resolve('streamEastProvider').extractM3u8(embedUrl),
   streamfree: (embedUrl, deadUrl) => container.resolve('streamFreeProvider').refreshSignedUrl(embedUrl, deadUrl),
-  sportsembed: async (embedUrl) => {
-    const { extractSportsEmbed } = require('../providers/SportsEmbedExtractor');
-    const m3u8 = await extractSportsEmbed(embedUrl);
-    return m3u8 ? { m3u8, referer: 'https://sportsembed.su/' } : null;
-  },
 };
 
 const current = new Map();   // key -> { url, referer, mintedAt }

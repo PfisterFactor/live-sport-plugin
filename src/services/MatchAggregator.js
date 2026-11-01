@@ -200,8 +200,8 @@ function withSyncDeadline(provider, onTimeout) {
 }
 
 class MatchAggregator {
-  constructor({ streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, ppvProvider, streamCornerProvider, zliveProvider, dliveProvider, liveTvProvider, damiTvProvider, streamEastProvider, cacheService }) {
-    this.providers = [streamFreeProvider, timStreamsProvider, sportyHunterProvider, watchFootyProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, streamedPkProvider, ppvProvider, streamCornerProvider, zliveProvider, dliveProvider, liveTvProvider, damiTvProvider, streamEastProvider]
+  constructor({ streamFreeProvider, sportyHunterProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, ppvProvider, streamCornerProvider, zliveProvider, dliveProvider, liveTvProvider, damiTvProvider, streamEastProvider, ak47LiveProvider, cacheService }) {
+    this.providers = [streamFreeProvider, sportyHunterProvider, cdnLiveProvider, streamSports99Provider, streamicProvider, ppvProvider, streamCornerProvider, zliveProvider, dliveProvider, liveTvProvider, damiTvProvider, streamEastProvider, ak47LiveProvider]
       .filter(p => p && typeof p.getMatches === 'function');
     this.cacheService = cacheService;
   }
@@ -420,11 +420,10 @@ class MatchAggregator {
           finalPres[idx].category = 'college';
         }
 
-        // Adopt the incoming kickoff when the existing one is missing; the
-        // dedicated event provider's precise epoch beats a coarse date.
+        // Adopt the incoming kickoff when the existing one is missing.
         const existingDateMs = _parseEventDate(existing.date);
         const incomingDateMs = _parseEventDate(match.date);
-        if (incomingDateMs > 0 && (existingDateMs <= 0 || (match.sources && match.sources.some(s => s && s.source === 'streamedpk')))) {
+        if (incomingDateMs > 0 && existingDateMs <= 0) {
           existing.date = match.date;
           finalPres[idx].date = incomingDateMs;
           indexDate(idx);
@@ -511,8 +510,6 @@ class MatchAggregator {
         }
       }
 
-      // GLOBAL FIX: Some providers (like Streamed.pk) flag future events as popular/live early.
-      // We must override and strip the popular flag if the event is too far in the future.
       if (match.popular === '1' && kickoff > 0 && !isWithinTimeWindow) {
         match.popular = '0';
       }
@@ -524,10 +521,7 @@ class MatchAggregator {
       if (kickoff === 0) return true; // Keep if we don't know the time
 
       const isReplay = sources.some(s => s && REPLAY_SOURCE_IDS.has(s.source));
-      const isTimStreams = sources.some(s => s && s.source === 'timstreams');
-      let windowMs = 24 * 3600 * 1000;
-      if (isReplay) windowMs = REPLAY_RETENTION_DAYS * 24 * 3600 * 1000;
-      else if (isTimStreams) windowMs = 48 * 3600 * 1000;
+      const windowMs = isReplay ? REPLAY_RETENTION_DAYS * 24 * 3600 * 1000 : 24 * 3600 * 1000;
       return now <= kickoff + windowMs;
     });
 

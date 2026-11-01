@@ -1,61 +1,119 @@
 const { describe, it, expect } = require('bun:test');
+const fs = require('fs');
+const path = require('path');
 const SportyHunterProvider = require('../../../src/providers/SportyHunterProvider');
 const { makeCradle, res } = require('./fixtures/helpers');
 
-const PAGE_MATCHES = [
-  { id: 'sh1', title: 'Arsenal vs Chelsea', sport: 'Soccer', timestamp: 1772366400, url: 'https://sportyhunter.xyz/match/sh1' },
-  { name: 'Lakers vs Celtics', sport: 'NBA', date: 1772370000 },
-];
+const fx = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', 'sportyhunter', name), 'utf8');
+const SCHEDULE = fx('schedule.html');
+const MATCH_PAGE = fx('match-vikings-lions.html');
+const SLUG = 'minnesota-vikings-at-detroit-lions';
+const TAIFOOD = 'https://taifood-blog.asia/embed/nfl/2026-11-01/min-det';
 
-function page(scriptTag, payload = { props: { pageProps: { matches: PAGE_MATCHES } } }) {
-  return `<!doctype html><body><div id="__next"></div>${scriptTag}${JSON.stringify(payload)}</script></body>`;
-}
+const PAGES = {
+  'https://sportsindx.st/new': SCHEDULE,
+  [`https://sportsindx.st/match/${SLUG}`]: MATCH_PAGE,
+  'https://topembed.online/kero?token=d595e06d7c': fx('topembed-wrapper.html'),
+  'https://espn.playerpromax.xyz/embed.php?token=e83e499bbf': fx('playerpromax-wrapper.html'),
+  'https://rockyembed.st/source/fetch.php?full=31073': fx('rockyembed-wrapper.html'),
+};
 
-function makeProvider(html) {
-  const p = new SportyHunterProvider(makeCradle());
-  p.proxyFetch = async () => (typeof html === 'string' ? res({ body: html }) : html);
+function makeProvider(pages = PAGES, extra = {}) {
+  const p = new SportyHunterProvider(makeCradle(extra));
+  p.requested = [];
+  p.proxyFetch = async (url, opts) => {
+    p.requested.push({ url, headers: opts && opts.headers });
+    const body = pages[url];
+    return body === undefined ? res({ status: 404, body: '' }) : res({ body });
+  };
   return p;
 }
 
+function fakeEmbedIndia() {
+  const calls = [];
+  return {
+    calls,
+    resolveStream: async (embedUrl, cat, title, src) => {
+      calls.push({ embedUrl, cat, title, src });
+      return [{ name: 'EmbedIndia', title, url: `http://x/api/manifest?embed=${encodeURIComponent(embedUrl)}` }];
+    },
+  };
+}
+
 describe('SportyHunterProvider.getMatches', () => {
-  it('parses the __NEXT_DATA__ blob into matches', async () => {
-    const matches = await makeProvider(page('<script id="__NEXT_DATA__" type="application/json">')).getMatches();
-    expect(matches.map((m) => m.id)).toEqual(['sporty_sh1', 'sporty_1']);
-    expect(matches[0].title).toBe('Arsenal vs Chelsea');
-    expect(matches[0].category).toBe('football');
-    expect(matches[0].date).toBe('1772366400000');
-    expect(matches[0].sources).toEqual([{ source: 'sportyhunter', id: 'sh1', url: 'https://sportyhunter.xyz/match/sh1' }]);
-    expect(matches[1].title).toBe('Lakers vs Celtics');
-    expect(matches[1].category).toBe('basketball');
+  it('lists every distinct event from the sportsindx.st schedule page', async () => {
+    const matches = await makeProvider().getMatches();
+    expect(matches).toHaveLength(80);
+    expect(new Set(matches.map((m) => m.id)).size).toBe(80);
   });
 
-  it('matches the script tag whatever attribute order or extras it carries', async () => {
-    const tag = '<script type="application/json" nonce="abc123" id="__NEXT_DATA__" data-nscript="beforeInteractive">';
-    const matches = await makeProvider(page(tag)).getMatches();
-    expect(matches).toHaveLength(2);
+  it('returns the live Vikings at Lions game as american_football with its kickoff', async () => {
+    const matches = await makeProvider().getMatches();
+    const m = matches.find((x) => x.id === `sporty_${SLUG}`);
+    expect(m.title).toBe('Minnesota Vikings at Detroit Lions');
+    expect(m.category).toBe('american_football');
+    expect(m.date).toBe('1793556000000');
+    expect(new Date(Number(m.date)).toISOString()).toBe('2026-11-01T18:00:00.000Z');
+    expect(m.status).toBe('live');
+    expect(m.popular).toBe('1');
+    expect(m.sources).toEqual([{ source: 'sportyhunter', id: SLUG }]);
   });
 
-  it('returns [] for an app-router page with no __NEXT_DATA__', async () => {
-    const html = '<!doctype html><body><script type="application/json">{"props":{}}</script></body>';
-    expect(await makeProvider(html).getMatches()).toEqual([]);
+  it('keeps the real sport category rather than the "popular" duplicate', async () => {
+    const matches = await makeProvider().getMatches();
+    const byCategory = {};
+    for (const m of matches) byCategory[m.category] = (byCategory[m.category] || 0) + 1;
+    expect(byCategory.american_football).toBe(15);
+    expect(byCategory.football).toBe(39);
+    expect(byCategory.basketball).toBe(7);
+    expect(byCategory.networks).toBe(7);
+    expect(byCategory.hockey).toBe(6);
+    expect(byCategory.popular).toBeUndefined();
   });
 
-  it('returns [] when the blob is malformed or has no matches array', async () => {
-    const broken = '<script id="__NEXT_DATA__">{"props":</script>';
-    expect(await makeProvider(broken).getMatches()).toEqual([]);
-    expect(await makeProvider(page('<script id="__NEXT_DATA__">', { props: { pageProps: {} } })).getMatches()).toEqual([]);
-  });
-
-  it('returns [] when the site is unreachable', async () => {
-    expect(await makeProvider(res({ status: 522, body: '' })).getMatches()).toEqual([]);
-    expect(await makeProvider('').getMatches()).toEqual([]);
+  it('returns [] when the site is unreachable or the page has no schedule', async () => {
+    expect(await makeProvider({}).getMatches()).toEqual([]);
+    expect(await makeProvider({ 'https://sportsindx.st/new': '<html></html>' }).getMatches()).toEqual([]);
   });
 });
 
 describe('SportyHunterProvider.resolveStream', () => {
-  it('hands back the match page as an external player link', async () => {
-    const [s] = await makeProvider('').resolveStream('sh1', 'football', 'Arsenal vs Chelsea');
-    expect(s.externalUrl).toBe('https://sportyhunter.xyz/match/sh1');
-    expect(s.url).toBeUndefined();
+  it('unwraps nested embeds down to the embedindia-family page and resolves it once', async () => {
+    const embedIndia = fakeEmbedIndia();
+    const p = makeProvider(PAGES, { embedIndiaProvider: embedIndia });
+    const streams = await p.resolveStream(SLUG, 'american_football', 'Minnesota Vikings at Detroit Lions');
+
+    const resolved = embedIndia.calls.map((c) => c.embedUrl);
+    expect(resolved).toContain(TAIFOOD);
+    expect(resolved).toContain(`${TAIFOOD}_540p`);
+    expect(resolved.filter((u) => u === TAIFOOD)).toHaveLength(1);
+    expect(streams.filter((s) => s.url).length).toBe(embedIndia.calls.length);
+  });
+
+  it('follows iframe src and atob() hops, sending the previous page as referer', async () => {
+    const p = makeProvider(PAGES, { embedIndiaProvider: fakeEmbedIndia() });
+    expect(await p._resolveEmbed('https://espn.playerpromax.xyz/embed.php?token=e83e499bbf')).toBe(TAIFOOD);
+    const hop = p.requested.find((r) => r.url.startsWith('https://rockyembed.st/'));
+    expect(hop.headers.Referer).toBe('https://espn.playerpromax.xyz/embed.php?token=e83e499bbf');
+  });
+
+  it('falls back to a /watch web player for embeds it cannot unwrap', async () => {
+    const p = makeProvider(PAGES, { embedIndiaProvider: fakeEmbedIndia() });
+    const streams = await p.resolveStream(SLUG, 'american_football', 'Minnesota Vikings at Detroit Lions');
+    const web = streams.find((s) => s.externalUrl && s.externalUrl.includes(encodeURIComponent('https://ch.nexa.st/stream?id=35')));
+    expect(web.externalUrl.startsWith('/watch?url=')).toBe(true);
+    expect(web.url).toBeUndefined();
+  });
+
+  it('returns only web players when no embedindia provider is wired', async () => {
+    const streams = await makeProvider().resolveStream(SLUG, 'american_football', 'Vikings');
+    expect(streams.length).toBeGreaterThan(0);
+    expect(streams.every((s) => s.externalUrl && !s.url)).toBe(true);
+  });
+
+  it('returns [] when the match page is missing or has no links', async () => {
+    expect(await makeProvider({}).resolveStream('nope', 'x', 'y')).toEqual([]);
+    const pages = { 'https://sportsindx.st/match/a': '<html>no links</html>' };
+    expect(await makeProvider(pages).resolveStream('a', 'x', 'y')).toEqual([]);
   });
 });

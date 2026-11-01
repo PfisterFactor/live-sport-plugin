@@ -131,12 +131,12 @@ describe('response rewriter', () => {
   });
 
   it('rewrites stream and poster URLs in addon payloads, including large bodies', async () => {
-    const sources = [{ source: 'embedst', id: 's1' }];
+    const sources = [{ source: 'ppv', id: 's1' }];
     fakes.cacheService = {
       getMatches: () => [{ id: 'm1', title: 'A vs B', category: 'football', sources }],
     };
     const filler = 'x'.repeat(80 * 1024);
-    fakes.embedStProvider = {
+    fakes.ppvProvider = {
       resolveStream: async () => [
         { url: '/watch?url=https%3A%2F%2Fe.st%2Fa', title: `Stream (${filler})` },
         { url: 'http://10.0.0.5:7000/api/manifest?url=https%3A%2F%2Fe.st%2Fb.m3u8', title: 'B' },
@@ -180,9 +180,9 @@ describe('response rewriter', () => {
 
   it('leaves addon payloads with no proxy URLs byte-identical', async () => {
     fakes.cacheService = {
-      getMatches: () => [{ id: 'm1', title: 'A vs B', category: 'football', sources: [{ source: 'embedst', id: 's1' }] }],
+      getMatches: () => [{ id: 'm1', title: 'A vs B', category: 'football', sources: [{ source: 'ppv', id: 's1' }] }],
     };
-    fakes.embedStProvider = {
+    fakes.ppvProvider = {
       resolveStream: async () => [{ url: 'https://cdn.example.com/a.m3u8', title: 'A' }],
     };
     const res = await fetch(`${base}/stream/tv/nuvio_sport_m1.json`, {
@@ -415,6 +415,14 @@ describe('/api/options', () => {
     expect(languages).toContain('Spanish');
     expect(languages).not.toContain('English');
     expect([...languages].sort()).toEqual(languages);
+  });
+
+  it('offers every selectable stream source to the configure page, with its default state', async () => {
+    const { SOURCES } = require('../../../src/streams');
+    const { sources } = await (await fetch(`${base}/api/options`)).json();
+    expect(sources.map((s) => s.id).sort()).toEqual(Object.keys(SOURCES).sort());
+    expect(sources.find((s) => s.id === 'embedindia').defaultEnabled).toBe(false);
+    expect(sources.find((s) => s.id === 'ppv').defaultEnabled).toBe(true);
   });
 });
 

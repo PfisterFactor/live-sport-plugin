@@ -31,28 +31,19 @@ describe('StreamScoringService', () => {
       .toBe(svc.calculateScore(s({ url: 'u', title: '720p' }), 'unknown'));
   });
 
-  it('ranks source reliability: known-reliable > streamfree > timstreams > unknown', () => {
+  it('ranks streamfree above an unknown source', () => {
     const score = (src) => svc.calculateScore(s({ url: 'u' }), src);
-    expect(score('echo')).toBeGreaterThan(score('streamfree'));
-    expect(score('streamfree')).toBeGreaterThan(score('timstreams'));
-    expect(score('timstreams')).toBeGreaterThan(score('whatever'));
-    expect(score('admin')).toBe(score('golf'));
+    expect(score('streamfree')).toBeGreaterThan(score('whatever'));
   });
 
   it('keeps a direct low-quality stream ahead of the best external web-player entry', () => {
     const directSd = svc.calculateScore(s({ url: 'u', title: 'SD feed' }), 'whatever');
-    const externalHd = svc.calculateScore(s({ externalUrl: 'u', title: '1080p feed' }), 'echo');
+    const externalHd = svc.calculateScore(s({ externalUrl: 'u', title: '1080p feed' }), 'streamfree');
     expect(directSd).toBeGreaterThan(externalHd);
   });
 
-  it('breaks a same-transport tie by source reliability when resolutions are one step apart', () => {
-    const hiResWeakSource = svc.calculateScore(s({ url: 'u', title: '1080p feed' }), 'whatever');
-    const loResStrongSource = svc.calculateScore(s({ url: 'u', title: '720p feed' }), 'echo');
-    expect(loResStrongSource).toBeGreaterThan(hiResWeakSource);
-  });
-
   it('scores a stream that has no title instead of throwing', () => {
-    expect(svc.calculateScore({ url: 'http://a/x.m3u8' }, 'echo')).toBe(95);
-    expect(svc.calculateScore({ url: 'u', resolution: '1920x1080' }, 'echo')).toBe(115);
+    expect(svc.calculateScore({ url: 'http://a/x.m3u8' }, 'streamfree')).toBe(90);
+    expect(svc.calculateScore({ url: 'u', resolution: '1920x1080' }, 'streamfree')).toBe(110);
   });
 });

@@ -1,18 +1,14 @@
 const { request } = require('undici');
 
 const sources = [
-  { name: 'WatchFooty', url: 'https://api.watchfooty.st/api/v1/matches/football' },
-  { name: 'TimStreams', url: 'https://timst.cfd/api/live-upcoming' },
   { name: 'StreamSports', url: 'https://api.cdnlivetv.is/matches' },
   { name: 'StreamSports99', url: 'https://api.cdnlivetv.is/api/v1/events/sports/?user=streamsports99&plan=vip' },
   { name: 'Streamic', url: 'https://streamic.st/api/J.php' },
   { name: 'StreamFree', url: 'https://streamfree.top/streams' },
-  { name: 'SportyHunter', url: 'https://sportyhunter.xyz' },
+  { name: 'SportyHunter', url: 'https://sportsindx.st/new' },
   { name: 'PPV / BinTv', url: 'https://api.ppv.st/api/streams' },
   { name: 'NTV', url: 'http://ntv.cx' },
   { name: 'CdnLive', url: 'https://api.cdnlivetv.tv/api/v1/events/sports/?user=cdnlivetv&plan=free' },
-  { name: 'Streamed.pk', url: 'https://streamed.pk/api/matches/all' },
-  { name: 'TVApp (Streamed.pk mirror)', url: 'https://api-backups.handleapi.win/matches' },
   { name: 'StreamCorner', url: 'https://data.daniellemarsh444.workers.dev/corner' },
   { name: 'ZLive', url: 'https://iptv.zlive.st/channels.json' },
   { name: 'DaddyLive', url: 'https://dlive.sx/index.php' },

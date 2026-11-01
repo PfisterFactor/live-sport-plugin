@@ -20,8 +20,8 @@ const provider = (matches) => ({ getMatches: async () => matches });
 const thrower = (msg = 'upstream down') => ({ getMatches: async () => { throw new Error(msg); } });
 
 function build(providers, cacheService = new CacheService()) {
-  const names = ['streamFreeProvider', 'timStreamsProvider', 'sportyHunterProvider', 'watchFootyProvider',
-    'cdnLiveProvider', 'streamSports99Provider', 'streamicProvider', 'streamedPkProvider'];
+  const names = ['streamFreeProvider', 'sportyHunterProvider', 'cdnLiveProvider', 'streamSports99Provider',
+    'streamicProvider', 'ppvProvider', 'streamCornerProvider', 'zliveProvider'];
   const deps = { cacheService };
   providers.forEach((p, i) => { deps[names[i]] = p; });
   return new MatchAggregator(deps);
@@ -216,17 +216,15 @@ describe('MatchAggregator.syncMatches', () => {
     expect((await agg.syncMatches()).map((m) => m.id)).toEqual(['a1']);
   });
 
-  it('expires matches more than 24h past kickoff, and TimStreams VODs after 48h', async () => {
+  it('expires matches more than 24h past kickoff', async () => {
     const t = NOW.getTime();
     const agg = build([provider([
       match({ id: 'fresh', title: 'A vs B', date: t - 2 * H }),
       match({ id: 'stale', title: 'C vs D', date: t - 25 * H }),
-      match({ id: 'vod', title: 'E vs F', date: t - 30 * H, sources: [{ id: 's', source: 'timstreams' }] }),
-      match({ id: 'oldvod', title: 'G vs H', date: t - 50 * H, sources: [{ id: 's', source: 'timstreams' }] }),
       match({ id: 'undated', title: 'I vs J' })
     ])]);
     const ids = (await agg.syncMatches()).map((m) => m.id).sort();
-    expect(ids).toEqual(['fresh', 'undated', 'vod']);
+    expect(ids).toEqual(['fresh', 'undated']);
   });
 
   it('accepts ISO string kickoff times when deciding what is still active', async () => {

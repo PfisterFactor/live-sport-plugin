@@ -9,9 +9,8 @@ const { parseLanguagePriority, compareStreams } = require('./services/LanguagePr
  * provider call shape (some providers take the raw source object as 4th arg).
  */
 const SOURCES = {
-  watchfooty: { priority: 2, registration: 'watchFootyProvider', label: 'WatchFooty', defaultEnabled: true, referer: 'https://watchfooty.st/' },
   cdnlive: { priority: 3, registration: 'cdnLiveProvider', label: 'CDNLiveTV', defaultEnabled: true, referer: 'https://cdnlivetv.tv/' },
-  streamsports99: { priority: 4, registration: 'streamSports99Provider', label: 'StreamSports99', defaultEnabled: true, referer: 'https://streamsports99.is/' },
+  streamsports99: { priority: 4, registration: 'streamSports99Provider', label: 'StreamSports99', defaultEnabled: true, referer: 'https://streamsports99.fun/' },
   streamic: { priority: 5, registration: 'streamicProvider', label: 'Streamic', defaultEnabled: true, passSrc: true, referer: 'https://streamic.st/' },
   streamfree: {
     priority: 8,
@@ -20,21 +19,18 @@ const SOURCES = {
     defaultEnabled: true,
     args: (src, match) => [src.id, src.original_category || match.category, match.title],
   },
-  timstreams: { priority: 9, registration: 'timStreamsProvider', label: 'TimStreams', defaultEnabled: true },
-  sportyhunter: { priority: 12, registration: 'sportyHunterProvider', label: 'SportyHunter', defaultEnabled: true, referer: 'https://sportyhunter.xyz/' },
+  sportyhunter: { priority: 12, registration: 'sportyHunterProvider', label: 'SportyHunter', defaultEnabled: true, referer: 'https://sportsindx.st/' },
   embedindia: { priority: 15, registration: 'embedIndiaProvider', label: 'EmbedIndia', defaultEnabled: false, passSrc: true },
-  embedst: { priority: 1.5, registration: 'embedStProvider', label: 'Embed.st', defaultEnabled: true, passSrc: true },
   ppv: { priority: 1.5, registration: 'ppvProvider', label: 'PPV', defaultEnabled: true, passSrc: true },
-  streamedpk: { priority: 1.5, registration: 'streamedPkProvider', label: 'Streamed.pk', defaultEnabled: true, passSrc: true, referer: 'https://embed.st/' },
   streamcorner: { priority: 6, registration: 'streamCornerProvider', label: 'StreamCorner', defaultEnabled: true, referer: 'https://streamcorner.st/' },
   zlive: { priority: 7, registration: 'zliveProvider', label: 'ZLive', defaultEnabled: true, passSrc: true },
   livetv: { priority: 2, registration: 'liveTvProvider', label: 'LiveTV', defaultEnabled: true, passSrc: true },
   damitv: { priority: 3, registration: 'damiTvProvider', label: 'DamiTV', defaultEnabled: true, passSrc: true, referer: 'https://damitv.st/' },
   dlive: { priority: 10, registration: 'dliveProvider', label: 'DaddyLive', defaultEnabled: true, passSrc: true, referer: 'https://dlive.sx/' },
   streameast: { priority: 7, registration: 'streamEastProvider', label: 'StreamEast', defaultEnabled: true },
+  ak47live: { priority: 3, registration: 'ak47LiveProvider', label: 'Ak47Live', defaultEnabled: true, passSrc: true },
 };
 
-// Unknown sources are likely new Streamed.pk sub-sources - 1.5 keeps them near the top.
 const UNKNOWN_PRIORITY = 1.5;
 
 const REFERER_BY_LABEL = Object.fromEntries(
@@ -126,7 +122,7 @@ const VERIFY_TIMEOUT_MS = Number(process.env.VERIFY_TIMEOUT_MS || 5000);
 const VERIFY_TOTAL_BUDGET_MS = Number(process.env.VERIFY_TOTAL_BUDGET_MS || 9000);
 const VERIFY_ATTEMPTS = Number(process.env.VERIFY_ATTEMPTS || 3);
 
-const VERIFY_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
+const VERIFY_USER_AGENT = impitClient.BROWSER_UA;
 
 // Registry of iframe/terminal hosts -> the Referer that makes them serve. It is
 // advisory: verification must keep working with the hard-coded chain below, so
@@ -155,9 +151,9 @@ function repairRefererFor(targetUrl) {
   try {
     host = new URL(targetUrl).hostname;
   } catch (_) {
-    return 'https://sportsembed.su/';
+    return null;
   }
-  if (!host) return 'https://sportsembed.su/';
+  if (!host) return null;
 
   try {
     const registry = getIframeDomainRegistry();
@@ -169,8 +165,6 @@ function repairRefererFor(targetUrl) {
     }
   } catch (_) { /* fall through to the hard-coded chain */ }
 
-  if (/\.wfty\.st$/.test(host) || /watchfooty/i.test(host)) return 'https://sportsembed.su/';
-  if (/\.strmd\.st$/.test(host) || /streamed/i.test(host)) return 'https://embed.st/';
   if (/tiestep|dlive|dlstreams|daddylive|assetrage|romponalis/i.test(host) || /\.7odxv0l067ka\.net$/.test(host)) return 'https://assetrage.net/';
   if (/dynproclaim\.net$/.test(host)) return `https://${host}/`;
   if (/hockey\.do$/.test(host)) return 'https://play.matchli.st/';
@@ -274,8 +268,8 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache) {
       }
 
       // Two upstream behaviours answer 403/401 to an otherwise healthy stream,
-      // and both are repaired by a Referer: some CDNs (WatchFooty's wfty.st
-      // edge) refuse when it is MISSING; DaddyLive's segment CDN refuses when it
+      // and both are repaired by a Referer: some CDNs refuse when it is
+      // MISSING; DaddyLive's segment CDN refuses when it
       // is PRESENT but from the wrong family. The candidate comes from the
       // TERMINAL host of the upstream URL and is tried at most ONCE, so a truly
       // dead stream costs one extra ping.
@@ -427,7 +421,7 @@ async function handleStream(type, id, config) {
   if (!isHubEpisode && episodeIndex && !isNaN(episodeIndex) && episodeIndex > 0) {
     const isMultiPart = match.sources.some(s => s.name && /(part|half|period)\s*\d+/i.test(s.name));
     if (isMultiPart) {
-      const cleanSources = match.sources.filter(s => s && s.url && !s.source?.includes('timstreams'));
+      const cleanSources = match.sources.filter(s => s && s.url);
       if (cleanSources[episodeIndex - 1]) candidateSources = [cleanSources[episodeIndex - 1]];
     }
   }
@@ -526,12 +520,10 @@ async function handleStream(type, id, config) {
     const titleText = (s.title || '').toLowerCase();
     let providerName = niceNames[s._source]
       || niceNames[Object.keys(niceNames).find(k => titleText.includes(k))]
-      || 'Streamed.pk';
+      || 'Stream';
 
-    if (titleText.includes('timstreams')) providerName = 'TimStreams';
-    else if (titleText.includes('sporty')) providerName = 'SportyHunter';
+    if (titleText.includes('sporty')) providerName = 'SportyHunter';
     else if (titleText.includes('streamfree')) providerName = 'StreamFree';
-    else if (titleText.includes('watchfooty')) providerName = 'WatchFooty';
     else if (titleText.includes('cdnlive')) providerName = 'CDNLiveTV';
     else if (titleText.includes('streamsports99')) providerName = 'StreamSports99';
     else if (titleText.includes('streamic')) providerName = 'Streamic';

@@ -129,11 +129,11 @@ After you change dependencies, run `bun install`, then regenerate the Nix lock w
 
 ## ✨ Key Features
 
-- **🏟️ Multi-Source Live Aggregator:** Concurrently scrapes and unifies live fixtures and 24/7 channels from many scrapers (Streamed.pk, StreamFree, WatchFooty, SportyHunter, TimStreams, StreamSports99, Streamic, CDNLiveTV, PPV.st, StreamCorner, Zlive, DaddyLive (dlive.sx), DamiTV, StreamEast) into a deduplicated catalog with merged stream choices. Streamed.pk falls back to the tvapp1.pk API mirror when its own API is unreachable.
+- **🏟️ Multi-Source Live Aggregator:** Concurrently scrapes and unifies live fixtures and 24/7 channels from many scrapers (StreamFree, SportyHunter (sportsindx.st), StreamSports99, Streamic, CDNLiveTV, PPV.st, Ak47Live, StreamCorner, Zlive, DaddyLive (dlive.sx), DamiTV, StreamEast) into a deduplicated catalog with merged stream choices.
 - **⏪ Replays:** LiveTV feeds a 21-day replay archive with an all-sports replay catalog and one replay row per sport. The `/configure` page can show all replays, only mainstream competitions, or hide replays.
 - **🛡️ Outbound URL Guard:** The image, manifest and embed proxies refuse loopback, private, link-local and metadata addresses, including after DNS resolution and on every redirect hop.
 - **⚡ Coalescing Zero-Lag HLS Manifest Proxy (`/api/manifest`):** High-speed HLS proxy powered by `impit` with persistent keep-alive connections. Coalesces concurrent in-flight upstream requests (`manifestInFlight`) to eliminate duplicate fetches during live player segment polls and prevent ISP/upstream throttling.
-- **🔐 Native WebAssembly (WASM) Decryption:** Executes native WebAssembly binaries (`stream-lock.wasm`, `gasm.wasm`, `lock.wasm`) directly in Node.js to decrypt obfuscated tokens and unlock protected third-party stream endpoints.
+- **🔐 Native WebAssembly (WASM) Decryption:** Executes native WebAssembly binaries (`gasm.wasm`) directly in Node.js to decrypt obfuscated tokens and unlock protected third-party stream endpoints.
 - **🌐 Universal Dynamic Host Routing:** Zero hardcoded local IPs. Automatically inspects incoming `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `cf-visitor` headers to dynamically rewrite all manifests, streams, and asset URLs to match the client's gateway (local LAN, Cloudflare Tunnels, Ngrok, or custom domains).
 - **🛡️ Circuit Breakers & Negative Caching:** Every provider scraper is isolated via a circuit breaker to instantly trip on timeouts or failures. Dead upstreams are negatively cached for 15s so video players seamlessly fail over to alternate sources without freezing.
 - **🖼️ Resilient 100% 200 OK Image Pipeline (`/img`):** High-performance image proxy with LRU caching (`stale-while-revalidate`), protocol-relative normalization (`//`), and dynamic inline SVG fallback cards to ensure clients never encounter broken posters or missing team crests.
@@ -151,7 +151,7 @@ After you change dependencies, run `bun install`, then regenerate the Nix lock w
 | **Addon Protocol** | In-house Stremio v1 router (`src/addonRouter.js`), no SDK dependency |
 | **Architecture** | Lazy singleton dependency registry, Domain-Driven Design (DDD) |
 | **High-Performance HTTP & TLS** | [Impit](https://github.com/impit-dev/impit) (Native HTTP client with TLS/browser fingerprint impersonation), [Undici](https://undici.nodejs.org/) |
-| **WASM Decryption Engines** | Native WebAssembly execution (`stream-lock.wasm`, `gasm.wasm`, `lock.wasm`) |
+| **WASM Decryption Engines** | Native WebAssembly execution (`gasm.wasm`) |
 | **Resilience & Fault Tolerance** | In-process circuit breakers, In-Flight Request Coalescing, Negative Cache Maps |
 | **Streaming & Playlists** | In-house HLS attribute parser (`src/services/m3u8.js`), Dynamic M3U8 segment rewriter |
 
@@ -185,7 +185,7 @@ bun run start
 
 Through the interactive `/configure` UI (or via URL-safe base64 config segments), you can customize:
 - **Sports Filtering:** Select from 14+ sports categories (Soccer, Basketball, Cricket, F1 & Racing, NFL, Hockey, Baseball, MMA, Golf, Tennis, Rugby, College Sports, Darts, Other).
-- **Streaming Sources Selection:** Individually enable or disable scrapers (StreamFree, TimStreams, Streamed.pk, SportyHunter, WatchFooty, CDNLiveTV, StreamSports99, Streamic).
+- **Streaming Sources Selection:** Individually enable or disable each scraper. The `/configure` page lists every source the add-on knows.
 - **Localization & Timezones:** Auto-detects or manually configures your local IANA timezone to render match kick-off schedules in your local time.
 - **Priority Tracking ("⭐ Your Teams"):** Enter comma-separated favorite clubs or athletes (e.g. `Arsenal, Lakers, Ferrari`) to dynamically generate a dedicated priority catalog.
 

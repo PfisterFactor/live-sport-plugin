@@ -45,38 +45,38 @@ describe('selectSources', () => {
   const src = (source) => ({ source, id: `${source}-1` });
 
   it('keeps only default-enabled sources when no config is supplied', () => {
-    const picked = selectSources([src('watchfooty'), src('embedindia'), src('embedst')], null);
-    expect(picked.map((s) => s.source)).toEqual(['embedst', 'watchfooty']);
+    const picked = selectSources([src('damitv'), src('embedindia'), src('ppv')], null);
+    expect(picked.map((s) => s.source)).toEqual(['ppv', 'damitv']);
   });
 
   it('treats sources:"none" as "use the defaults"', () => {
-    const picked = selectSources([src('watchfooty'), src('embedindia')], { sources: 'none' });
-    expect(picked.map((s) => s.source)).toEqual(['watchfooty']);
+    const picked = selectSources([src('damitv'), src('embedindia')], { sources: 'none' });
+    expect(picked.map((s) => s.source)).toEqual(['damitv']);
   });
 
   it('enables embedindia only when explicitly opted in', () => {
-    const picked = selectSources([src('watchfooty'), src('embedindia')], { sources: 'watchfooty,embedindia' });
-    expect(picked.map((s) => s.source)).toEqual(['watchfooty', 'embedindia']);
+    const picked = selectSources([src('damitv'), src('embedindia')], { sources: 'damitv,embedindia' });
+    expect(picked.map((s) => s.source)).toEqual(['damitv', 'embedindia']);
   });
 
   it('drops configured sources that are not in the list', () => {
-    const picked = selectSources([src('watchfooty'), src('cdnlive')], { sources: 'cdnlive' });
+    const picked = selectSources([src('damitv'), src('cdnlive')], { sources: 'cdnlive' });
     expect(picked.map((s) => s.source)).toEqual(['cdnlive']);
   });
 
   it('orders by ascending priority and keeps equal priorities in input order', () => {
     const picked = selectSources(
-      [src('timstreams'), src('streamedpk'), src('watchfooty'), src('embedst')],
+      [src('streameast'), src('cdnlive'), src('damitv'), src('ppv')],
       null
     );
-    expect(picked.map((s) => s.source)).toEqual(['streamedpk', 'embedst', 'watchfooty', 'timstreams']);
-    expect(SOURCES.streamedpk.priority).toBe(SOURCES.embedst.priority);
+    expect(picked.map((s) => s.source)).toEqual(['ppv', 'cdnlive', 'damitv', 'streameast']);
+    expect(SOURCES.cdnlive.priority).toBe(SOURCES.damitv.priority);
   });
 
   it('never selects an unknown source, in either config mode', () => {
-    const list = [src('brand-new'), src('watchfooty')];
-    expect(selectSources(list, null).map((s) => s.source)).toEqual(['watchfooty']);
-    expect(selectSources(list, { sources: 'brand-new,watchfooty' }).map((s) => s.source)).toEqual(['watchfooty']);
+    const list = [src('brand-new'), src('damitv')];
+    expect(selectSources(list, null).map((s) => s.source)).toEqual(['damitv']);
+    expect(selectSources(list, { sources: 'brand-new,damitv' }).map((s) => s.source)).toEqual(['damitv']);
   });
 });
 
@@ -85,15 +85,15 @@ describe('resolveSource', () => {
 
   it('calls a plain provider with (id, category, title)', async () => {
     const args = [];
-    fakes.timStreamsProvider = { resolveStream: async (...a) => { args.push(a); return []; } };
-    await resolveSource({ source: 'timstreams', id: 'ts-1' }, match);
+    fakes.streamEastProvider = { resolveStream: async (...a) => { args.push(a); return []; } };
+    await resolveSource({ source: 'streameast', id: 'ts-1' }, match);
     expect(args[0]).toEqual(['ts-1', 'football', 'A vs B']);
   });
 
   it('passes the source object as a fourth argument for passSrc providers', async () => {
     const args = [];
-    const src = { source: 'embedst', id: 'e-1', extra: 1 };
-    fakes.embedStProvider = { resolveStream: async (...a) => { args.push(a); return []; } };
+    const src = { source: 'ppv', id: 'e-1', extra: 1 };
+    fakes.ppvProvider = { resolveStream: async (...a) => { args.push(a); return []; } };
     await resolveSource(src, match);
     expect(args[0]).toEqual(['e-1', 'football', 'A vs B', src]);
   });
@@ -109,15 +109,15 @@ describe('resolveSource', () => {
 
   it('tags each resolved stream with its score and source', async () => {
     fakes.streamScorer = { calculateScore: (s, source) => `${source}:${s.url}`.length };
-    fakes.watchFootyProvider = { resolveStream: async () => [{ url: 'https://a/x.m3u8' }] };
-    const out = await resolveSource({ source: 'watchfooty', id: 'w-1' }, match);
-    expect(out[0]._source).toBe('watchfooty');
-    expect(out[0].score).toBe('watchfooty:https://a/x.m3u8'.length);
+    fakes.damiTvProvider = { resolveStream: async () => [{ url: 'https://a/x.m3u8' }] };
+    const out = await resolveSource({ source: 'damitv', id: 'w-1' }, match);
+    expect(out[0]._source).toBe('damitv');
+    expect(out[0].score).toBe('damitv:https://a/x.m3u8'.length);
   });
 
   it('swallows provider failures and returns no streams', async () => {
-    fakes.watchFootyProvider = { resolveStream: async () => { throw new Error('upstream 500'); } };
-    expect(await resolveSource({ source: 'watchfooty', id: 'w-1' }, match)).toEqual([]);
+    fakes.damiTvProvider = { resolveStream: async () => { throw new Error('upstream 500'); } };
+    expect(await resolveSource({ source: 'damitv', id: 'w-1' }, match)).toEqual([]);
   });
 
   it('returns nothing for an unregistered source without resolving a provider', async () => {
@@ -131,7 +131,7 @@ describe('handleStream', () => {
     id: 'm1',
     title: 'A vs B',
     category: 'football',
-    sources: [{ source: 'watchfooty', id: 'w-1' }],
+    sources: [{ source: 'damitv', id: 'w-1' }],
     ...over,
   });
 
@@ -150,10 +150,10 @@ describe('handleStream', () => {
   it('keeps streams from healthy providers when another provider throws', async () => {
     fakes.cacheService = {
       getMatches: () => [matchWith({
-        sources: [{ source: 'watchfooty', id: 'w-1' }, { source: 'cdnlive', id: 'c-1' }],
+        sources: [{ source: 'damitv', id: 'w-1' }, { source: 'cdnlive', id: 'c-1' }],
       })],
     };
-    fakes.watchFootyProvider = { resolveStream: async () => { throw new Error('dead'); } };
+    fakes.damiTvProvider = { resolveStream: async () => { throw new Error('dead'); } };
     fakes.cdnLiveProvider = { resolveStream: async () => [{ url: 'https://cdn/a.m3u8', title: 'Auto' }] };
 
     const { streams } = await handleStream('tv', 'nuvio_sport_m1');
@@ -166,10 +166,10 @@ describe('handleStream', () => {
     process.env.STREAM_HARD_DEADLINE_MS = '5000';
     fakes.cacheService = {
       getMatches: () => [matchWith({
-        sources: [{ source: 'watchfooty', id: 'w-1' }, { source: 'cdnlive', id: 'c-1' }],
+        sources: [{ source: 'damitv', id: 'w-1' }, { source: 'cdnlive', id: 'c-1' }],
       })],
     };
-    fakes.watchFootyProvider = {
+    fakes.damiTvProvider = {
       resolveStream: () => new Promise((resolve) => setTimeout(() => resolve([{ url: 'https://wf/slow.m3u8' }]), 3000)),
     };
     fakes.cdnLiveProvider = { resolveStream: async () => [{ url: 'https://cdn/a.m3u8' }] };
@@ -184,24 +184,24 @@ describe('handleStream', () => {
     process.env.STREAM_SOFT_DEADLINE_MS = '40';
     process.env.STREAM_HARD_DEADLINE_MS = '5000';
     fakes.cacheService = { getMatches: () => [matchWith()] };
-    fakes.watchFootyProvider = {
+    fakes.damiTvProvider = {
       resolveStream: () => new Promise((resolve) => setTimeout(() => resolve([{ url: 'https://wf/late.m3u8' }]), 300)),
     };
 
     const { streams } = await handleStream('tv', 'nuvio_sport_m1');
     expect(streams).toHaveLength(1);
-    expect(streams[0]._source).toBe('watchfooty');
+    expect(streams[0]._source).toBe('damitv');
   });
 
   it('drops streams whose health check fails and keeps web player links', async () => {
     fakes.cacheService = {
       getMatches: () => [matchWith({
-        sources: [{ source: 'watchfooty', id: 'w-1' }],
+        sources: [{ source: 'damitv', id: 'w-1' }],
       })],
     };
-    fakes.watchFootyProvider = {
+    fakes.damiTvProvider = {
       resolveStream: async () => [
-        { url: 'https://cdn/dead.m3u8', title: 'Dead', behaviorHints: { proxyHeaders: { request: { Referer: 'https://watchfooty.st/' } } } },
+        { url: 'https://cdn/dead.m3u8', title: 'Dead', behaviorHints: { proxyHeaders: { request: { Referer: 'https://damitv.st/' } } } },
         { url: '/watch?url=https%3A%2F%2Fe.st%2Fa', title: 'Web' },
       ],
     };
@@ -215,7 +215,7 @@ describe('handleStream', () => {
 
   it('drops 200 responses whose body is not an m3u8 playlist', async () => {
     fakes.cacheService = { getMatches: () => [matchWith()] };
-    fakes.watchFootyProvider = { resolveStream: async () => [{ url: 'https://cdn/a.m3u8' }] };
+    fakes.damiTvProvider = { resolveStream: async () => [{ url: 'https://cdn/a.m3u8' }] };
     safeFetchSpy.mockImplementation(async () => ({
       ok: true, status: 200, headers: {}, text: async () => 'Not found', json: async () => ({}),
     }));
@@ -226,51 +226,51 @@ describe('handleStream', () => {
   it('builds the display title from provider, channel, quality and bitrate', async () => {
     parsed = { qualityTag: '1080p', resolution: '1920x1080', bitrateTag: '4.2 Mbps' };
     fakes.cacheService = { getMatches: () => [matchWith()] };
-    fakes.watchFootyProvider = {
+    fakes.damiTvProvider = {
       resolveStream: async () => [{ url: 'https://cdn/a.m3u8', title: 'Main Feed (Sky Sports) 👥 42 Viewers' }],
     };
     const { streams } = await handleStream('tv', 'nuvio_sport_m1');
     expect(streams[0].name).toBe('⚡ Direct Stream');
-    expect(streams[0].title).toBe('⚽ WatchFooty | 📺 Sky Sports 🇬🇧 [UK • English]\n📺 Quality: 1080p | 4.2 Mbps\n👥 42 Viewers');
+    expect(streams[0].title).toBe('⚽ DamiTV | 📺 Sky Sports 🇬🇧 [UK • English]\n📺 Quality: 1080p | 4.2 Mbps\n👥 42 Viewers');
   });
 
   it('labels web player entries separately and omits an absent bitrate', async () => {
     fakes.cacheService = { getMatches: () => [matchWith({ category: 'tennis' })] };
-    fakes.watchFootyProvider = {
+    fakes.damiTvProvider = {
       resolveStream: async () => [{ externalUrl: 'https://e.st/a', title: 'Auto' }],
     };
     const { streams } = await handleStream('tv', 'nuvio_sport_m1');
     expect(streams[0].name).toBe('🌐 Web Stream');
-    expect(streams[0].title).toBe('📡 WatchFooty\n📺 Quality: Auto');
+    expect(streams[0].title).toBe('📡 DamiTV\n📺 Quality: Auto');
   });
 
   it('attaches segment referer hints to direct and proxied m3u8 streams', async () => {
     fakes.cacheService = {
       getMatches: () => [matchWith({
         sources: [
-          { source: 'watchfooty', id: 'w-1' },
+          { source: 'damitv', id: 'w-1' },
           { source: 'streamfree', id: 's-1' },
-          { source: 'embedst', id: 'e-1' },
+          { source: 'ppv', id: 'e-1' },
         ],
       })],
     };
-    fakes.watchFootyProvider = { resolveStream: async () => [{ url: 'https://cdn/a.m3u8', score: 5 }] };
+    fakes.damiTvProvider = { resolveStream: async () => [{ url: 'https://cdn/a.m3u8', score: 5 }] };
     fakes.streamFreeProvider = {
       resolveStream: async () => [{
         url: '/api/manifest?url=https%3A%2F%2Fcdn%2Fs.m3u8&referer=https%3A%2F%2Fstreamfree.top%2Fembed%2Ffootball%2Fx&origin=https://streamfree.top',
         score: 3,
       }],
     };
-    fakes.embedStProvider = {
+    fakes.ppvProvider = {
       resolveStream: async () => [{ url: '/api/manifest?url=https%3A%2F%2Fcdn%2Fb.m3u8', score: 1 }],
     };
 
     const { streams } = await handleStream('tv', 'nuvio_sport_m1');
-    const direct = streams.find((s) => s._source === 'watchfooty');
+    const direct = streams.find((s) => s._source === 'damitv');
     const proxied = streams.find((s) => s._source === 'streamfree');
-    const bare = streams.find((s) => s._source === 'embedst');
+    const bare = streams.find((s) => s._source === 'ppv');
     expect(direct.behaviorHints.proxyHeaders).toEqual({
-      request: { Referer: 'https://watchfooty.st/', Origin: 'https://watchfooty.st' },
+      request: { Referer: 'https://damitv.st/', Origin: 'https://damitv.st' },
     });
     expect(proxied.behaviorHints.proxyHeaders).toEqual({
       request: { Referer: 'https://streamfree.top/embed/football/x', Origin: 'https://streamfree.top' },
@@ -283,10 +283,10 @@ describe('handleStream', () => {
   it('sorts direct streams ahead of web streams, then by descending score', async () => {
     fakes.cacheService = {
       getMatches: () => [matchWith({
-        sources: [{ source: 'watchfooty', id: 'w-1' }],
+        sources: [{ source: 'damitv', id: 'w-1' }],
       })],
     };
-    fakes.watchFootyProvider = {
+    fakes.damiTvProvider = {
       resolveStream: async () => [
         { externalUrl: '/watch?url=a', score: 99 },
         { url: 'https://cdn/low.m3u8', score: 1 },
@@ -303,7 +303,7 @@ describe('handleStream', () => {
 
   it('injects the 24/7 cricket channels only while streamfree is enabled', async () => {
     fakes.cacheService = { getMatches: () => [matchWith({ category: 'cricket' })] };
-    fakes.watchFootyProvider = { resolveStream: async () => [] };
+    fakes.damiTvProvider = { resolveStream: async () => [] };
     const seen = [];
     fakes.streamFreeProvider = {
       resolveStream: async (id) => { seen.push(id); return [{ url: `https://cdn/${id}.m3u8` }]; },
@@ -314,14 +314,14 @@ describe('handleStream', () => {
     expect(withDefaults.streams.every((s) => s._source === 'streamfree')).toBe(true);
 
     seen.length = 0;
-    const optedOut = await handleStream('tv', 'nuvio_sport_m1', { sources: 'watchfooty' });
+    const optedOut = await handleStream('tv', 'nuvio_sport_m1', { sources: 'damitv' });
     expect(seen).toEqual([]);
     expect(optedOut.streams).toEqual([]);
   });
 
   it('advertises a short client cache window for a populated list', async () => {
     fakes.cacheService = { getMatches: () => [matchWith()] };
-    fakes.watchFootyProvider = { resolveStream: async () => [{ url: 'https://wf/a.m3u8' }] };
+    fakes.damiTvProvider = { resolveStream: async () => [{ url: 'https://wf/a.m3u8' }] };
     const out = await handleStream('tv', 'nuvio_sport_m1');
     expect(out.streams).toHaveLength(1);
     expect(out).toMatchObject({ cacheMaxAge: 30, staleRevalidate: 30, staleError: 60 });
@@ -329,7 +329,7 @@ describe('handleStream', () => {
 
   it('never lets a client cache an empty stream list', async () => {
     fakes.cacheService = { getMatches: () => [matchWith()] };
-    fakes.watchFootyProvider = { resolveStream: async () => [] };
+    fakes.damiTvProvider = { resolveStream: async () => [] };
     const out = await handleStream('tv', 'nuvio_sport_m1');
     expect(out.streams).toEqual([]);
     expect(out.cacheMaxAge).toBe(0);
@@ -341,8 +341,8 @@ describe('handleStream replay, language and web-stream handling', () => {
   const provide = (name, streams) => { fakes[name] = { resolveStream: async () => streams }; };
 
   it('ranks English first, then the configured languages, then the rest', async () => {
-    fakes.cacheService = { getMatches: () => [match([{ source: 'watchfooty', id: 'w' }])] };
-    provide('watchFootyProvider', [
+    fakes.cacheService = { getMatches: () => [match([{ source: 'damitv', id: 'w' }])] };
+    provide('damiTvProvider', [
       { url: 'https://cdn/de.m3u8', title: 'Feed (Sky Sport DE)', score: 90 },
       { url: 'https://cdn/en.m3u8', title: 'Feed (Sky Sports)', score: 10 },
       { url: 'https://cdn/es.m3u8', title: 'Feed (Movistar Plus)', score: 20 },

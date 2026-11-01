@@ -154,6 +154,18 @@ describe('GET /api/manifest', () => {
     expect(q.get('origin')).toBe('https://ref.example');
   });
 
+  it('proxies master variants whose URL has no .m3u8 and leaves segments direct even when they inherit one', async () => {
+    safeFetchSpy.mockImplementation(async (url) => upstream(url.includes('/caxi')
+      ? '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nhttps://seg.example.net/redirect/s1.txt?path=x\n'
+      : '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=4000000\nhttps://pl.example.net/playlist/1/caxi\n'));
+    const master = await (await proxy('https://pl.example.net/playlist/1/load-playlist?&.m3u8')).text();
+    const variant = master.split('\n').find((l) => l.startsWith('/api/manifest'));
+    expect(variant).toBeDefined();
+    const media = await (await fetch(`${base}${variant}`)).text();
+    const segment = media.split('\n').find((l) => l && !l.startsWith('#'));
+    expect(segment.startsWith('https://seg.example.net/redirect/s1.txt?path=x')).toBe(true);
+  });
+
   const segments = (n, dur) => Array.from({ length: n }, (_, i) => `#EXTINF:${dur},\nseg${i}.ts`).join('\n');
   const startTag = (body) => body.split('\n').filter((l) => l.startsWith('#EXT-X-START'));
 
@@ -273,7 +285,7 @@ describe('GET /api/manifest token renewal', () => {
   let extractSpy;
 
   const renewable = (extra = '') =>
-    proxy(dead, `&renew=timstreams&embed=${encodeURIComponent(embed)}${extra}`);
+    proxy(dead, `&renew=embedindia&embed=${encodeURIComponent(embed)}${extra}`);
 
   beforeEach(() => {
     renewal.reset();
@@ -281,7 +293,7 @@ describe('GET /api/manifest token renewal', () => {
     embed = `https://embed.example.com/e${uid}`;
     dead = `https://cdn.example.com/secure/dead${uid}/1000/live.m3u8`;
     fresh = `https://cdn.example.com/secure/fresh${uid}/9999/live.m3u8`;
-    extractSpy = spyOn(container.resolve('timStreamsProvider'), 'extractM3u8')
+    extractSpy = spyOn(container.resolve('embedIndiaProvider'), 'extractM3u8')
       .mockImplementation(async () => ({ m3u8: fresh, referer: 'https://embed.example.com' }));
     safeFetchSpy.mockImplementation(async (url, opts) => {
       calls.push({ url, opts });
@@ -331,7 +343,7 @@ describe('GET /api/manifest token renewal', () => {
     const body = await (await renewable()).text();
     const child = body.split('\n').find((l) => l.startsWith('/api/manifest'));
     const q = new URL(`http://x${child}`).searchParams;
-    expect(q.get('renew')).toBe('timstreams');
+    expect(q.get('renew')).toBe('embedindia');
     expect(q.get('embed')).toBe(embed);
     expect(q.get('base')).toBe(dead);
     expect(q.get('rel')).toBe('high/mono.m3u8');
@@ -345,7 +357,7 @@ describe('GET /api/manifest token renewal', () => {
     });
     const deadVariant = new URL('high/mono.m3u8', dead).toString();
     const res = await proxy(deadVariant,
-      `&renew=timstreams&embed=${encodeURIComponent(embed)}&base=${encodeURIComponent(dead)}&rel=${encodeURIComponent('high/mono.m3u8')}`);
+      `&renew=embedindia&embed=${encodeURIComponent(embed)}&base=${encodeURIComponent(dead)}&rel=${encodeURIComponent('high/mono.m3u8')}`);
     expect(res.status).toBe(200);
     expect(await res.text()).toContain(new URL('seg1.ts', freshVariant).toString());
     expect(extractSpy).toHaveBeenCalledTimes(1);

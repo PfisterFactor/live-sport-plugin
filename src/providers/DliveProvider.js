@@ -1,6 +1,5 @@
 const os = require('os');
 const BaseProvider = require('./BaseProvider');
-const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 const IframeDomainRegistry = require('../services/IframeDomainRegistry');
@@ -8,6 +7,8 @@ const { getChannelLogo } = require('../services/ChannelLogoService');
 const { BREAKER_TIMEOUT_MS } = require('../services/CircuitBreakerService');
 const { parseTimezone } = require('../timezone');
 const { manifestProxyUrl } = require('../proxyUrl');
+
+const DLIVE_UA = BaseProvider.DEFAULT_UA;
 
 const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{FE0F}]/gu;
 
@@ -120,7 +121,7 @@ class DliveProvider extends BaseProvider {
     this.sourceName = 'dlive';
     this.baseUrl = 'https://dlive.sx';
     this.baseDomains = ['https://dlive.sx', 'https://dlstreams.st'];
-    this.folders = ['cast', 'casting', 'watch', 'player', 'plus', 'stream'];
+    this.folders = ['cast', 'player', 'casting', 'plus', 'watch', 'stream'];
     this.domainRegistry = (opts && opts.iframeDomainRegistry) || new IframeDomainRegistry();
 
     /**
@@ -138,7 +139,7 @@ class DliveProvider extends BaseProvider {
         if (timeoutMs < 1000) break;
         try {
           const res = await this.proxyFetch(`${base}/index.php`, {
-            headers: { 'User-Agent': DEFAULT_UA, 'Referer': `${base}/` },
+            headers: { 'User-Agent': DLIVE_UA, 'Referer': `${base}/` },
             timeoutMs,
           });
           if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -160,7 +161,7 @@ class DliveProvider extends BaseProvider {
         if (timeoutMs < 1000) break;
         try {
           const res = await this.proxyFetch(`${base}/24-7-channels.php`, {
-            headers: { 'User-Agent': DEFAULT_UA, 'Referer': `${base}/` },
+            headers: { 'User-Agent': DLIVE_UA, 'Referer': `${base}/` },
             timeoutMs,
           });
           if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -389,7 +390,7 @@ class DliveProvider extends BaseProvider {
   async _playerEmbedUrl(channelId, base = this.baseUrl, folder = 'stream', timeoutMs = 6000) {
     const playerUrl = `${base}/${folder}/stream-${encodeURIComponent(channelId)}.php`;
     const res = await this.proxyFetch(playerUrl, {
-      headers: { 'User-Agent': DEFAULT_UA, 'Referer': `${base}/` },
+      headers: { 'User-Agent': DLIVE_UA, 'Referer': `${base}/` },
       timeoutMs,
     });
     if (!res.ok) return null;
@@ -428,7 +429,7 @@ class DliveProvider extends BaseProvider {
     try {
       const res = await this.proxyFetch(url, {
         headers: {
-          'User-Agent': DEFAULT_UA,
+          'User-Agent': DLIVE_UA,
           'Referer': referer,
           'Accept': 'text/html,application/xhtml+xml,application/json,*/*;q=0.8',
         },
@@ -584,21 +585,73 @@ class DliveProvider extends BaseProvider {
   }
 
   /**
-   * Probe mirror folders for one channel and stop at the first manifest: the
-   * folders are alternatives for the same channel, not a matrix to exhaust.
-   * Domains and folders are ordered by observed reliability.
+   * Classify one manifest: 'ok' when it answers 200 with a playlist whose
+   * first segment is fetchable real media (a master playlist is followed one
+   * level to its first variant), 'warming' when the playlist or its first
+   * segment is 404 (on-demand transcoders publish nothing until the embed has
+   * been opened), 'dead' otherwise. Token walls (403), TikTok image-wrapped
+   * segments and non-playlists are dead.
+   */
+  async _probeManifest(m3u8, referer, depth = 0) {
+    try {
+      const headers = { 'User-Agent': DLIVE_UA };
+      if (referer) headers.Referer = referer;
+      const res = await this.proxyFetch(m3u8, { headers, timeoutMs: 6000 });
+      if (res.status === 404) return 'warming';
+      if (!res.ok) return 'dead';
+      const body = await res.text();
+      if (!body.includes('#EXTM3U')) return 'dead';
+      const uris = body.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+      if (uris.length === 0) return 'warming';
+      if (uris.some((line) => isTikTokCloakedStream(line))) return 'dead';
+
+      const first = new URL(uris[0], m3u8).toString();
+      if (body.includes('#EXT-X-STREAM-INF')) {
+        return depth < 1 ? await this._probeManifest(first, referer, depth + 1) : 'dead';
+      }
+      const seg = await this.proxyFetch(first, { headers: { ...headers, Range: 'bytes=0-1023' }, timeoutMs: 6000 });
+      if (seg.ok) return 'ok';
+      return seg.status === 404 ? 'warming' : 'dead';
+    } catch (_) {
+      return 'dead';
+    }
+  }
+
+  /**
+   * True when the manifest plays. A 'warming' manifest is probed once more
+   * after WARMUP_MS, so a channel the embed page just started is not skipped.
+   */
+  async _manifestPlays(m3u8, referer) {
+    let state = await this._probeManifest(m3u8, referer);
+    if (state === 'warming') {
+      await new Promise((resolve) => setTimeout(resolve, DliveProvider.WARMUP_MS));
+      state = await this._probeManifest(m3u8, referer);
+    }
+    return state === 'ok';
+  }
+
+  /**
+   * Probe mirror folders for one channel and stop at the first manifest that
+   * plays: the folders are alternatives for the same channel, not a matrix to
+   * exhaust. A folder whose embed was already tried (several folders share
+   * one player host) is skipped. Domains and folders are ordered by observed
+   * reliability.
    */
   async _resolveChannel(channelId) {
     const deadline = Date.now() + DliveProvider.CHANNEL_BUDGET_MS;
+    const tried = new Set();
     for (const base of this.baseDomains) {
       for (const folder of this.folders) {
         const remaining = deadline - Date.now();
         if (remaining < 1000) return null;
         try {
           const embedUrl = await this._playerEmbedUrl(channelId, base, folder, Math.min(6000, remaining));
-          if (!embedUrl) continue;
+          if (!embedUrl || tried.has(embedUrl)) continue;
+          tried.add(embedUrl);
           const extracted = await this.extractM3u8(embedUrl);
-          if (extracted) return { ...extracted, embedUrl };
+          if (extracted && await this._manifestPlays(extracted.m3u8, extracted.referer)) {
+            return { ...extracted, embedUrl };
+          }
         } catch (err) {
           console.error(`[${this.name}] ${base}/${folder} failed for channel ${channelId}:`, err.message);
         }
@@ -648,5 +701,8 @@ DliveProvider.MAX_EMBED_DEPTH = 2;
 
 /** Wall-clock cap for probing every mirror of one channel. */
 DliveProvider.CHANNEL_BUDGET_MS = 20000;
+
+/** Pause before re-probing a manifest that 404s because its channel is still starting. */
+DliveProvider.WARMUP_MS = 3000;
 
 module.exports = DliveProvider;

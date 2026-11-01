@@ -82,12 +82,10 @@ describe('replay catalogs', () => {
     expect(res.cacheMaxAge).toBe(1800);
   });
 
-  it('requires a replay-capable provider and excludes timstreams VODs', async () => {
+  it('requires a replay-capable provider', async () => {
     matches = [
       replay({ id: 'ok' }),
-      replay({ id: 'vod', sources: [{ source: 'timstreams', id: 'v' }] }),
-      replay({ id: 'both', sources: [{ source: 'livetv', id: 'a' }, { source: 'timstreams', id: 'b' }] }),
-      replay({ id: 'liveprov', sources: [{ source: 'streamedpk', id: 'c' }] })
+      replay({ id: 'liveprov', sources: [{ source: 'ppv', id: 'c' }] })
     ];
     expect(ids(await handleCatalog('tv', 'nuvio_sports_replays', {}, {}))).toEqual(['ok']);
   });

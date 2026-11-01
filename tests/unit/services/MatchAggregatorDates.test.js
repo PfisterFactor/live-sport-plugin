@@ -131,7 +131,7 @@ describe('Kickoff timestamp parsing and timezone formatting', () => {
       category: 'american_football',
       date: String(kickoff),
       status: 'upcoming',
-      sources: [{ source: 'streamedpk', id: '123' }]
+      sources: [{ source: 'ppv', id: '123' }]
     };
 
     const meta = mapMatchToMetaPreview(match, { timezone: LA_TZ }, 'tv');

@@ -30,7 +30,7 @@ const manifest = {
   name: '🏆 Nuvio Live Sports',
   description:
     'The ultimate live sports aggregator. Stream live Football, NBA, NFL, NHL, F1, and more. ' +
-    'Scrapes high-speed streams from multiple providers including StreamFree, TimStreams, and IPTV. Zero-lag proxy included.',
+    'Scrapes high-speed streams from multiple providers including StreamFree, PPV, and DaddyLive. Zero-lag proxy included.',
   logo: '/logo.png',
 
   types: ['tv'],

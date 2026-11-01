@@ -3,8 +3,10 @@ const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 const { parseTimezone } = require('../timezone');
+const { manifestProxyUrl } = require('../proxyUrl');
 
 const EXCLUDE_KEYS = ['total_events', 'cached', 'timestamp'];
+const VIP_ORIGIN = 'https://streamsports99.fun';
 
 /**
  * Shared client for the cdnlivetv API family. Behavior is driven entirely by
@@ -204,49 +206,51 @@ class CdnLiveProvider extends BaseProvider {
     return null;
   }
 
+  /**
+   * Origin the player page and CDN are fetched with. VIP-plan players reject
+   * every Referer except the streamsports99 front-end domains.
+   */
+  _originFor(playerUrl) {
+    return /[?&]plan=vip(?:&|$)/.test(playerUrl) ? VIP_ORIGIN : this.config.refererOrigin;
+  }
+
+  async _channelStreams(ch, idx) {
+    const { streamLabel } = this.config;
+    const title = ch.channel_name || `${streamLabel} ${idx + 1}`;
+    const origin = this._originFor(ch.url);
+    const out = [];
+    const m3u8Url = await this._decodePlayer(ch.url, origin);
+    if (m3u8Url) {
+      out.push(new StreamEntity({
+        name: this.name,
+        title,
+        url: manifestProxyUrl({ url: m3u8Url, referer: `${origin}/`, origin }),
+        behaviorHints: { notWebReady: true },
+        resolution: 'HD',
+      }));
+    }
+    out.push(new StreamEntity({
+      name: this.name,
+      title: `${title} (Web Player)`,
+      externalUrl: ch.url,
+      resolution: 'HD',
+    }));
+    return out;
+  }
+
   async resolveStream(sourceId, matchCategory, matchTitle) {
-    const streams = [];
-    const { refererOrigin, streamLabel } = this.config;
     try {
       const data = await this.fetchMain.fire();
       const item = this._findItem(data, sourceId);
-
-      if (item && Array.isArray(item.channels)) {
-        for (const [idx, ch] of item.channels.entries()) {
-          if (!ch.url) continue;
-          const m3u8Url = await this._decodePlayer(ch.url, refererOrigin);
-          if (m3u8Url) {
-            streams.push(new StreamEntity({
-              name: this.name,
-              title: ch.channel_name || `${streamLabel} ${idx + 1}`,
-              url: m3u8Url,
-              behaviorHints: {
-                notWebReady: true,
-                proxyHeaders: {
-                  request: {
-                    'Origin': refererOrigin,
-                    'Referer': `${refererOrigin}/`,
-                    'User-Agent': DEFAULT_UA,
-                  },
-                },
-              },
-              resolution: 'HD',
-            }));
-            continue;
-          }
-
-          streams.push(new StreamEntity({
-            name: this.name,
-            title: ch.channel_name || `${streamLabel} ${idx + 1} (Web Player)`,
-            externalUrl: ch.url,
-            resolution: 'HD',
-          }));
-        }
-      }
+      if (!item || !Array.isArray(item.channels)) return [];
+      const groups = await Promise.all(
+        item.channels.map((ch, idx) => (ch.url ? this._channelStreams(ch, idx) : []))
+      );
+      return groups.flat();
     } catch (err) {
       console.error(`[${this.name}] resolveStream failed for ${sourceId}:`, err.message);
+      return [];
     }
-    return streams;
   }
 }
 
@@ -266,7 +270,7 @@ CdnLiveProvider.VARIANTS = {
     apiUrl: 'https://api.cdnlivetv.is/api/v1/events/sports/?user=streamsports99&plan=vip',
     sourceKey: 'streamsports99',
     idPrefix: 'ss99_',
-    refererOrigin: 'https://streamsports99.is',
+    refererOrigin: VIP_ORIGIN,
     streamLabel: 'VIP Stream',
     allCategories: true,
     // Upstream lists fixtures days ahead that never get channels.

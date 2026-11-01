@@ -12,9 +12,7 @@ const {
   TIER,
   getMatchTier,
   isLowerDivisionFixture,
-  hasMainstreamSource,
-  explainMatch,
-  MAINSTREAM_SOURCE_IDS
+  explainMatch
 } = require('../../../src/services/MainstreamRankingService');
 
 const { compareCatalogMatches } = require('../../../src/catalog');
@@ -53,16 +51,6 @@ describe('getMatchTier - mainstream signals', () => {
     expect(getMatchTier(m)).toBe(TIER.MAINSTREAM);
   });
 
-  it('promotes a Streamed.pk source', () => {
-    const m = liveOnce({
-      title: 'Some Unlabelled Fixture',
-      league: '',
-      sources: [{ source: 'streamedpk', id: 'spk_1' }]
-    });
-    expect(getMatchTier(m)).toBe(TIER.MAINSTREAM);
-    expect(explainMatch(m)).toBe('mainstream-source');
-  });
-
   it('promotes a major-league category by construction', () => {
     const m = liveOnce({ title: 'Team A vs Team B', category: 'basketball', league: '' });
     expect(getMatchTier(m)).toBe(TIER.MAINSTREAM);
@@ -99,19 +87,6 @@ describe('getMatchTier - demotion', () => {
     expect(getMatchTier(liveOnce({ title: 'Barcelona B vs X', league: '' }))).not.toBe(TIER.MAINSTREAM);
   });
 
-  it('keeps an unambiguous lower division minor even with a Streamed.pk source', () => {
-    // Regression for the user's report: Streamed.pk carries a few second-tier
-    // games, and demotion must beat the source signal.
-    const m = liveOnce({
-      title: 'Real Zaragoza vs Sporting Gijon',
-      league: 'La Liga 2',
-      sources: [{ source: 'streamedpk', id: 'spk_2' }]
-    });
-    expect(hasMainstreamSource(m)).toBe(true);
-    expect(getMatchTier(m)).toBe(TIER.MINOR);
-    expect(explainMatch(m)).toBe('lower-division-marker');
-  });
-
   it('does not misread a global competition named "Championship" as a second tier', () => {
     const m = liveOnce({ title: 'World Rally Championship 2026', category: 'motorsport', league: '' });
     expect(isLowerDivisionFixture(m)).toBe(false);
@@ -123,8 +98,7 @@ describe('getMatchTier - demotion', () => {
     const m = liveOnce({
       title: 'New York Mets vs Philadelphia Phillies',
       category: 'baseball',
-      league: 'MLB National League',
-      sources: [{ source: 'streamedpk', id: 'spk_3' }]
+      league: 'MLB National League'
     });
     expect(isLowerDivisionFixture(m)).toBe(false);
     expect(getMatchTier(m)).toBe(TIER.MAINSTREAM);
@@ -148,10 +122,6 @@ describe('getMatchTier - robustness', () => {
 
   it('accepts an object-shaped or missing league without throwing', () => {
     expect(() => getMatchTier(liveOnce({ title: 'A vs B', league: { name: 'La Liga' } }))).not.toThrow();
-  });
-
-  it('exposes the mainstream source set as data', () => {
-    expect(MAINSTREAM_SOURCE_IDS.has('streamedpk')).toBe(true);
   });
 });
 

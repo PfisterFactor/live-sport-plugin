@@ -103,7 +103,7 @@ async function fetchUpstreamManifest(targetUrl, referer, origin) {
   const headers = {
     'Referer': referer,
     'Origin': origin,
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36'
+    'User-Agent': impitClient.BROWSER_UA
   };
   const result = await impitClient.safeFetch(targetUrl, { headers, timeoutMs: 5000, attempts: 1, validateUrl: guardedUrl });
   if (!result.ok) {
@@ -164,6 +164,7 @@ function rewriteManifest(out, manifestUrl, referer, origin, descriptor) {
   const ttlMs = targetDuration ? (targetDuration * 1000) / 2 : MANIFEST_TTL_MS;
 
   const isLive = !out.includes('#EXT-X-ENDLIST');
+  const isMaster = out.includes('#EXT-X-STREAM-INF');
   const startOffset = isLive && !out.includes('#EXT-X-START') ? startOffsetSeconds(targetDuration, totalDuration) : 0;
   let injectedStart = startOffset === 0;
 
@@ -195,7 +196,7 @@ function rewriteManifest(out, manifestUrl, referer, origin, descriptor) {
       absoluteUrl = l;
     }
 
-    if (absoluteUrl.includes('.m3u8')) {
+    if (isMaster) {
       let child = `/api/manifest?url=${encodeURIComponent(absoluteUrl)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}`;
       if (descriptor) {
         // `rel` lets a child playlist be rebuilt against a re-minted parent.

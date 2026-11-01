@@ -1,0 +1,134 @@
+const crypto = require('crypto');
+const { describe, it, expect, beforeEach, afterEach, setSystemTime } = require('bun:test');
+const Ak47LiveProvider = require('../../../src/providers/Ak47LiveProvider');
+const { makeCradle, res } = require('./fixtures/helpers');
+
+const KEY = Buffer.from('az1sUE8zNnNUVXpN', 'ascii');
+const IV = Buffer.from('dz00QVhsNmZZU0Fw', 'ascii');
+
+function encrypt(value) {
+  const cipher = crypto.createCipheriv('aes-128-cbc', KEY, IV);
+  const ct = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+  const b = Buffer.from(ct.toString('base64'), 'ascii').reverse();
+  for (let i = 0; i < b.length - 1; i += 2) {
+    const t = b[i]; b[i] = b[i + 1]; b[i + 1] = t;
+  }
+  return b.toString('base64');
+}
+
+const EVENTS = [
+  {
+    event: JSON.stringify({
+      teamAName: 'Minnesota Vikings', teamBName: 'Detroit Lions', category: 'NFL', eventName: 'NFL',
+      date: '01/11/2026', time: '18:00:00', end_date: '01/11/2026', end_time: '21:30:00',
+      links: 'pro/vikings.txt', link_names: ['CH 1', 'CH 2'], visible: true,
+    }),
+  },
+  {
+    event: JSON.stringify({
+      teamAName: 'Old', teamBName: 'Game', category: 'Football', date: '30/10/2026', time: '12:00:00',
+      end_date: '30/10/2026', end_time: '14:00:00', links: 'pro/old.txt', visible: true,
+    }),
+  },
+  { event: JSON.stringify({ teamAName: 'Hidden', teamBName: 'Team', visible: false }) },
+];
+
+const PLAYLIST = `#EXTM3U
+#EXTVLCOPT:http-referrer=https://ref.example/
+#EXTVLCOPT:http-origin=https://ref.example
+#EXTINF:-1 tvg-name="x" group-title="NFL" tvg-logo="http://l/x.png",NFL : Minnesota Vikings vs Detroit Lions --- CH 3
+http://193.47.62.55/hls/G999A.m3u8
+#EXTINF:-1 group-title="Football",Old vs Game --- CH 1
+http://cdn.example/old.m3u8
+#EXTINF:-1 group-title="Football",Dash vs Game
+http://cdn.example/x.mpd
+#EXTINF:-1 group-title="Premier League",Arsenal vs Chelsea
+http://cdn.example/arsenal.m3u8
+`;
+
+function makeProvider(routes) {
+  const p = new Ak47LiveProvider(makeCradle());
+  p.proxyFetch = async (url) => {
+    for (const [needle, body] of Object.entries(routes)) {
+      if (url.includes(needle)) return res({ body });
+    }
+    return res({ status: 404 });
+  };
+  return p;
+}
+
+const ROUTES = {
+  'hellobabu.xyz/events.txt': encrypt(EVENTS),
+  'fawasp.pages.dev': PLAYLIST,
+  'axsp.pages.dev': '',
+};
+
+describe('Ak47LiveProvider getMatches', () => {
+  beforeEach(() => setSystemTime(new Date('2026-11-01T19:00:00Z')));
+  afterEach(() => setSystemTime());
+
+  it('decodes events, merges playlist channels, and drops finished or hidden fixtures', async () => {
+    const matches = await makeProvider(ROUTES).getMatches();
+    expect(matches.map(m => m.title)).toEqual(['Minnesota Vikings vs Detroit Lions', 'Arsenal vs Chelsea']);
+    const [nfl, arsenal] = matches;
+    expect(nfl.category).toBe('american_football');
+    expect(nfl.status).toBe('live');
+    expect(nfl.date).toBe(String(Date.UTC(2026, 10, 1, 18)));
+    expect(nfl.sources.map(s => s.id)).toEqual(['pro/vikings.txt#0', 'pro/vikings.txt#1', 'http://193.47.62.55/hls/G999A.m3u8']);
+    expect(nfl.sources[2].referer).toBe('https://ref.example/');
+    expect(arsenal.category).toBe('football');
+    expect(arsenal.team1).toEqual({ name: 'Arsenal' });
+  });
+
+  it('reads a reused entry with a days-old start as kicking off on its end date', async () => {
+    const stale = (teamAName, date, time, end_date, end_time) => ({
+      event: JSON.stringify({
+        teamAName, teamBName: 'Rival', category: 'NFL', date, time,
+        end_date, end_time, links: `pro/${teamAName}.txt`, visible: true,
+      }),
+    });
+    const matches = await makeProvider({
+      'hellobabu.xyz/events.txt': encrypt([
+        stale('Lions', '26/10/2026', '18:00:00', '01/11/2026', '21:30:00'),
+        stale('Ravens', '26/10/2026', '23:00:00', '02/11/2026', '02:30:00'),
+      ]),
+      'fawasp.pages.dev': '',
+      'axsp.pages.dev': '',
+    }).getMatches();
+    const date = (team) => matches.find(m => m.title.startsWith(team)).date;
+    expect(date('Lions')).toBe(String(Date.UTC(2026, 10, 1, 18)));
+    expect(date('Ravens')).toBe(String(Date.UTC(2026, 10, 1, 23)));
+  });
+});
+
+describe('Ak47LiveProvider resolveStream', () => {
+  it('resolves an encrypted channel with link headers through the manifest proxy', async () => {
+    const p = makeProvider({
+      'pro/vikings.txt': encrypt([
+        { name: 'CH 1', link: 'https://a.example/x.m3u8|Referer=https://site.example/page&User-Agent=UA1' },
+        { name: 'CH 2', link: 'https://b.example/y.m3u8', key: 'abcd' },
+      ]),
+    });
+    const [s] = await p.resolveStream('pro/vikings.txt#0', 'american_football', 'Vikings vs Lions', {
+      linksPath: 'pro/vikings.txt', streamIndex: 0, channelName: 'CH 1',
+    });
+    const u = new URL(s.url);
+    expect(u.pathname).toBe('/api/manifest');
+    expect(u.searchParams.get('url')).toBe('https://a.example/x.m3u8');
+    expect(u.searchParams.get('referer')).toBe('https://site.example/page');
+    expect(u.searchParams.get('origin')).toBe('https://site.example');
+    expect(s.title).toBe('Vikings vs Lions (CH 1)');
+
+    expect(await p.resolveStream('x', 'a', 'b', { linksPath: 'pro/vikings.txt', streamIndex: 1 })).toEqual([]);
+  });
+
+  it('proxies direct playlist URLs with their own referer and rejects DASH/embed links', async () => {
+    const p = makeProvider({});
+    const [s] = await p.resolveStream('http://1.2.3.4/a.m3u8', 'x', 'T', {
+      id: 'http://1.2.3.4/a.m3u8', referer: 'https://ref.example/', origin: 'https://ref.example', channelName: 'CH 3',
+    });
+    expect(new URL(s.url).searchParams.get('referer')).toBe('https://ref.example/');
+    expect(await p.resolveStream('http://c.example/a.mpd', 'x', 'T', {})).toEqual([]);
+    expect(await p.resolveStream('https://embed.st/a.m3u8', 'x', 'T', {})).toEqual([]);
+  });
+});

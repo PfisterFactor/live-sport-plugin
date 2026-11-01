@@ -283,25 +283,104 @@ describe('DliveProvider channel probing', () => {
     p = new DliveProvider(makeCradle());
   });
 
-  it('probes the cast mirror first and the generic stream folder last, dlive.sx before dlstreams.st', () => {
-    expect(p.folders).toEqual(['cast', 'casting', 'watch', 'player', 'plus', 'stream']);
+  it('probes the cast mirror first, the dead-prone dembed folders last, dlive.sx before dlstreams.st', () => {
+    expect(p.folders).toEqual(['cast', 'player', 'casting', 'plus', 'watch', 'stream']);
     expect(p.baseDomains).toEqual(['https://dlive.sx', 'https://dlstreams.st']);
   });
 
-  it('stops at the first folder that yields a manifest', async () => {
+  it('stops at the first folder that yields a playing manifest', async () => {
     const probed = [];
-    p._playerEmbedUrl = async (id, base, folder) => { probed.push(`${base}/${folder}`); return folder === 'casting' ? 'https://emb.example/e/1' : null; };
+    p._playerEmbedUrl = async (id, base, folder) => { probed.push(`${base}/${folder}`); return folder === 'player' ? 'https://emb.example/e/1' : null; };
     p.extractM3u8 = async () => ({ m3u8: 'https://cdn.example/a.m3u8', referer: 'https://emb.example/' });
+    p._manifestPlays = async () => true;
 
     const r = await p._resolveChannel('91');
     expect(r).toEqual({ m3u8: 'https://cdn.example/a.m3u8', referer: 'https://emb.example/', embedUrl: 'https://emb.example/e/1' });
-    expect(probed).toEqual(['https://dlive.sx/cast', 'https://dlive.sx/casting']);
+    expect(probed).toEqual(['https://dlive.sx/cast', 'https://dlive.sx/player']);
   });
 
   it('moves on to the next folder when an embed has no manifest', async () => {
     p._playerEmbedUrl = async (id, base, folder) => `https://emb.example/${folder}`;
     p.extractM3u8 = async (embed) => (embed.endsWith('/watch') ? { m3u8: 'https://cdn.example/w.m3u8', referer: 'https://emb.example/' } : null);
+    p._manifestPlays = async () => true;
     expect((await p._resolveChannel('91')).embedUrl).toBe('https://emb.example/watch');
+  });
+
+  it('moves on when a manifest does not play and never retries the same embed on another mirror', async () => {
+    const extracted = [];
+    p._playerEmbedUrl = async (id, base, folder) => (folder === 'cast' ? 'https://dead.example/e/1' : folder === 'stream' ? 'https://ok.example/e/1' : null);
+    p.extractM3u8 = async (embed) => { extracted.push(embed); return { m3u8: `${embed}.m3u8`, referer: 'https://x/' }; };
+    p._manifestPlays = async (m3u8) => m3u8.startsWith('https://ok.example');
+
+    expect((await p._resolveChannel('91')).embedUrl).toBe('https://ok.example/e/1');
+    expect(extracted).toEqual(['https://dead.example/e/1', 'https://ok.example/e/1']);
+  });
+
+  it('returns null when every manifest fails verification', async () => {
+    p._playerEmbedUrl = async () => 'https://dead.example/e/1';
+    p.extractM3u8 = async () => ({ m3u8: 'https://dead.example/a.m3u8', referer: 'https://dead.example/' });
+    p._manifestPlays = async () => false;
+    expect(await p._resolveChannel('91')).toBeNull();
+  });
+
+  describe('_manifestPlays', () => {
+    const savedWarmup = DliveProvider.WARMUP_MS;
+    beforeEach(() => { DliveProvider.WARMUP_MS = 0; });
+    afterEach(() => { DliveProvider.WARMUP_MS = savedWarmup; });
+
+    it('re-probes a 404 playlist once and accepts it when the channel has started', async () => {
+      let hits = 0;
+      p.proxyFetch = async (url) => {
+        if (url.endsWith('.m3u8')) return hits++ === 0 ? res({ status: 404 }) : res({ body: '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' });
+        return res({ status: 206, body: 'x' });
+      };
+      expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(true);
+      expect(hits).toBe(2);
+    });
+
+    it('does not re-probe a 403 token wall', async () => {
+      let hits = 0;
+      p.proxyFetch = async () => { hits++; return res({ status: 403, body: 'token required' }); };
+      expect(await p._manifestPlays('https://edge.example/a.m3u8', 'https://emb.example/')).toBe(false);
+      expect(hits).toBe(1);
+    });
+
+    it('accepts a playlist with real segments and sends the referer', async () => {
+      let seen;
+      p.proxyFetch = async (url, opts) => { seen = opts.headers; return res({ body: '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' }); };
+      expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(true);
+      expect(seen.Referer).toBe('https://emb.example/');
+    });
+
+    it('follows a master playlist to its first variant and checks the first segment', async () => {
+      const calls = [];
+      p.proxyFetch = async (url) => {
+        calls.push(url);
+        if (url.endsWith('master.m3u8')) return res({ body: '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv1/index.m3u8\n' });
+        if (url.endsWith('index.m3u8')) return res({ body: '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' });
+        return res({ status: 206, body: 'x' });
+      };
+      expect(await p._manifestPlays('https://cdn.example/master.m3u8', 'https://emb.example/')).toBe(true);
+      expect(calls).toEqual(['https://cdn.example/master.m3u8', 'https://cdn.example/v1/index.m3u8', 'https://cdn.example/v1/seg1.ts']);
+    });
+
+    it('rejects a playlist whose first segment 404s or that lists no segments', async () => {
+      p.proxyFetch = async (url) => (url.endsWith('.ts') ? res({ status: 404 }) : res({ body: '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' }));
+      expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);
+      p.proxyFetch = async () => res({ body: '#EXTM3U\n#EXT-X-ENDLIST\n' });
+      expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);
+    });
+
+    it('rejects 403 token walls, non-playlists, TikTok image segments and network errors', async () => {
+      p.proxyFetch = async () => res({ status: 403, body: 'token required' });
+      expect(await p._manifestPlays('https://edge.example/a.m3u8', 'https://emb.example/')).toBe(false);
+      p.proxyFetch = async () => res({ body: '<html>nope</html>' });
+      expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);
+      p.proxyFetch = async () => res({ body: '#EXTM3U\n#EXTINF:6,\nhttps://p16-common-sign.tiktokcdn-us.com/tiktok-obj/x~tplv-tiktokx-origin.image\n' });
+      expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);
+      p.proxyFetch = async () => { throw new Error('boom'); };
+      expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);
+    });
   });
 
   it('skips the cloaked TikTok web player iframe', async () => {

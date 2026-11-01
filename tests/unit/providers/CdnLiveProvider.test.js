@@ -167,11 +167,28 @@ describe('CdnLiveProvider.resolveStream', () => {
       player: async () => res({ body: playerHtml(['https://edge.cdn.tv/live/', 'arsenal/index.m3u8']) }),
     });
     const streams = await p.resolveStream('g1', 'football', 'Arsenal vs Chelsea');
-    expect(streams).toHaveLength(1);
-    expect(streams[0].url).toBe('https://edge.cdn.tv/live/arsenal/index.m3u8');
+    expect(streams).toHaveLength(2);
+    const q = new URL(streams[0].url).searchParams;
+    expect(new URL(streams[0].url).pathname).toBe('/api/manifest');
+    expect(q.get('url')).toBe('https://edge.cdn.tv/live/arsenal/index.m3u8');
+    expect(q.get('referer')).toBe('https://cdnlivetv.tv/');
+    expect(q.get('origin')).toBe('https://cdnlivetv.tv');
     expect(streams[0].title).toBe('EN HD');
-    expect(streams[0].behaviorHints.proxyHeaders.request.Referer).toBe('https://cdnlivetv.tv/');
+    expect(streams[1].externalUrl).toBe('https://cdnlivetv.tv/player/1');
     expect(p._lastOpts.headers.Referer).toBe('https://cdnlivetv.tv/');
+  });
+
+  it('uses the streamsports99 front-end origin for VIP-plan players', async () => {
+    const payload = apiPayload();
+    payload['cdn-live-tv'].Soccer[0].channels = [{ channel_name: 'VIP', url: 'https://cdnlivetv.tv/api/v1/channels/player/?name=X&user=streamsports99&plan=vip' }];
+    const p = makeProvider('cdnlive', {
+      payload,
+      player: async () => res({ body: playerHtml(['https://edge.cdn.tv/v.m3u8']) }),
+    });
+    const [s] = await p.resolveStream('g1', 'football', 'Arsenal vs Chelsea');
+    const q = new URL(s.url).searchParams;
+    expect(q.get('referer')).toBe('https://streamsports99.fun/');
+    expect(p._lastOpts.headers.Referer).toBe('https://streamsports99.fun/');
   });
 
   it('decodes double-quoted base64 blobs too', async () => {
@@ -179,7 +196,7 @@ describe('CdnLiveProvider.resolveStream', () => {
       player: async () => res({ body: playerHtml(['https://edge.cdn.tv/x.m3u8'], '"') }),
     });
     const [s] = await p.resolveStream('g1', 'football', 'Arsenal vs Chelsea');
-    expect(s.url).toBe('https://edge.cdn.tv/x.m3u8');
+    expect(new URL(s.url).searchParams.get('url')).toBe('https://edge.cdn.tv/x.m3u8');
   });
 
   it('falls back to the web player link when the page has no decodable stream', async () => {

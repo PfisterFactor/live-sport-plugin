@@ -92,9 +92,12 @@ app.get('/api/options', (req, res) => {
     const language = rule && typeof rule.language === 'string' ? rule.language.trim() : '';
     if (language && language.toLowerCase() !== 'english') seen.add(language);
   }
+  const sources = Object.entries(require('./streams').SOURCES)
+    .map(([id, s]) => ({ id, label: s.label, defaultEnabled: !!s.defaultEnabled }))
+    .sort((a, b) => a.label.localeCompare(b.label));
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'public, max-age=3600');
-  res.json({ languages: [...seen].sort() });
+  res.json({ languages: [...seen].sort(), sources });
 });
 
 // /img?url=... serves a cached upstream image, falling back to a generated
@@ -147,7 +150,7 @@ const ALLOWED_EMBED_DOMAINS = new Set([
   'vipbox.lc',
 ]);
 
-const PROXY_EMBED_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
+const PROXY_EMBED_UA = require('./impitClient').BROWSER_UA;
 
 app.get('/api/proxy-embed', async (req, res) => {
   const rawUrl = req.query.url;

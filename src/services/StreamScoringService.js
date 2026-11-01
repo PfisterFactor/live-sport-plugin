@@ -25,15 +25,8 @@ class StreamScoringService {
       score -= 5;
     }
 
-    // 3. Source Reliability
-    // Some sources are known to buffer less.
-    const reliableSources = ['admin', 'echo', 'delta', 'golf'];
-    if (reliableSources.includes(sourceName)) {
-      score += 15;
-    } else if (sourceName === 'streamfree') {
+    if (sourceName === 'streamfree') {
       score += 10;
-    } else if (sourceName === 'timstreams') {
-      score += 5;
     }
 
     return score;

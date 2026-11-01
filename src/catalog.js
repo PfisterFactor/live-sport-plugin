@@ -206,8 +206,8 @@ function compareCatalogMatches(a, b, isReplayMode = false) {
   const bFix = isRealFixture(b);
   if (aFix !== bFix) return bFix - aFix;
 
-  // `popular` cannot separate a top-flight tie from a second-division one
-  // (Streamed.pk flags most of its events popular), so rank by tier first.
+  // `popular` cannot separate a top-flight tie from a second-division one,
+  // so rank by tier first.
   const aTier = getMatchTier(a);
   const bTier = getMatchTier(b);
   if (aTier !== bTier) return aTier - bTier;
@@ -500,8 +500,7 @@ function filterBySports(matches, conf) {
 function isListedReplay(m) {
   return isReplayMatch(m) &&
     Array.isArray(m.sources) &&
-    m.sources.some(s => s && REPLAY_SOURCES.has(s.source)) &&
-    !m.sources.some(s => s && s.source === 'timstreams');
+    m.sources.some(s => s && REPLAY_SOURCES.has(s.source));
 }
 
 /** True when a finished or over-running fixture should not appear as live or upcoming. */

@@ -178,6 +178,7 @@ describe('DliveProvider schedule parsing', () => {
     const p = makeProvider();
     p._playerEmbedUrl = async (id) => `https://dlive.sx/embed.php?id=${id}`;
     p.extractM3u8 = async () => ({ m3u8: 'https://edge.dl/live/a.m3u8', referer: 'https://dlive.sx/' });
+    p._manifestPlays = async () => true;
     const [stream] = await p.resolveStream('35', 'football', 'Celtic vs Rangers');
     const q = new URL(stream.url).searchParams;
     expect(q.get('url')).toBe('https://edge.dl/live/a.m3u8');

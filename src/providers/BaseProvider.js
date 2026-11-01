@@ -5,7 +5,7 @@ const CF_PROXY_POOL = [];
 // unavailable (ARM64 VPS, Alpine/musl Linux, certain Windows Server builds).
 const impitClient = require('../impitClient');
 
-const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
+const DEFAULT_UA = impitClient.BROWSER_UA;
 
 // Pick a random proxy from the pool
 function getCfProxyUrl() {
