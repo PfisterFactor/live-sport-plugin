@@ -61,7 +61,7 @@ The addon is now available at `http://localhost:7000` (or `http://YOUR_SERVER_IP
 
 ---
 
-### Option 2: Local Node.js (Same Wi-Fi / Local Network or Cloudflare Tunnel)
+### Option 2: Local Bun (Same Wi-Fi / Local Network or Cloudflare Tunnel)
 
 1. **Install and run the addon:**
    ```bash
@@ -103,7 +103,7 @@ cd live-sport-plugin
 bun install --frozen-lockfile
 
 # Run under PM2 via bunx (no global install required)
-bunx pm2 start src/index.js --name "nuvio-sports"
+bunx pm2 start src/index.js --name "nuvio-sports" --interpreter bun
 bunx pm2 save
 bunx pm2 startup
 ```
@@ -112,7 +112,7 @@ bunx pm2 startup
 
 ### Option 4: Nix Flake (Reproducible Build)
 
-The flake builds the addon with [bun2nix](https://github.com/nix-community/bun2nix). Every dependency is pinned by hash in `bun.nix` and `flake.lock`, so the build needs no network and produces the same store path on every machine. The package runs on Node 22 (`aarch64-darwin`, `x86_64-linux`, `aarch64-linux`).
+The flake builds the addon with [bun2nix](https://github.com/nix-community/bun2nix). Every dependency is pinned by hash in `bun.nix` and `flake.lock`, so the build needs no network and produces the same store path on every machine. The package runs on Bun (`aarch64-darwin`, `x86_64-linux`, `aarch64-linux`).
 
 ```bash
 # Run without installing
@@ -133,7 +133,7 @@ After you change dependencies, run `bun install`, then regenerate the Nix lock w
 - **⏪ Replays:** LiveTV feeds a 21-day replay archive with an all-sports replay catalog and one replay row per sport. The `/configure` page can show all replays, only mainstream competitions, or hide replays.
 - **🛡️ Outbound URL Guard:** The image, manifest and embed proxies refuse loopback, private, link-local and metadata addresses, including after DNS resolution and on every redirect hop.
 - **⚡ Coalescing Zero-Lag HLS Manifest Proxy (`/api/manifest`):** High-speed HLS proxy powered by `impit` with persistent keep-alive connections. Coalesces concurrent in-flight upstream requests (`manifestInFlight`) to eliminate duplicate fetches during live player segment polls and prevent ISP/upstream throttling.
-- **🔐 Native WebAssembly (WASM) Decryption:** Executes native WebAssembly binaries (`gasm.wasm`) directly in Node.js to decrypt obfuscated tokens and unlock protected third-party stream endpoints.
+- **🔐 Native WebAssembly (WASM) Decryption:** Executes native WebAssembly binaries (`gasm.wasm`) directly in Bun to decrypt obfuscated tokens and unlock protected third-party stream endpoints.
 - **🌐 Universal Dynamic Host Routing:** Zero hardcoded local IPs. Automatically inspects incoming `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `cf-visitor` headers to dynamically rewrite all manifests, streams, and asset URLs to match the client's gateway (local LAN, Cloudflare Tunnels, Ngrok, or custom domains).
 - **🛡️ Circuit Breakers & Negative Caching:** Every provider scraper is isolated via a circuit breaker to instantly trip on timeouts or failures. Dead upstreams are negatively cached for 15s so video players seamlessly fail over to alternate sources without freezing.
 - **🖼️ Resilient 100% 200 OK Image Pipeline (`/img`):** High-performance image proxy with LRU caching (`stale-while-revalidate`), protocol-relative normalization (`//`), and dynamic inline SVG fallback cards to ensure clients never encounter broken posters or missing team crests.
@@ -147,7 +147,7 @@ After you change dependencies, run `bun install`, then regenerate the Nix lock w
 
 | Layer | Technologies |
 |---|---|
-| **Runtime & Core** | [Node.js](https://nodejs.org/) (v22+ LTS), `node:http` with an in-house router (`src/httpApp.js`) |
+| **Runtime & Core** | [Bun](https://bun.sh/) (v1.4.2+), `node:http` with an in-house router (`src/httpApp.js`) |
 | **Addon Protocol** | In-house Stremio v1 router (`src/addonRouter.js`), no SDK dependency |
 | **Architecture** | Lazy singleton dependency registry, Domain-Driven Design (DDD) |
 | **High-Performance HTTP & TLS** | [Impit](https://github.com/impit-dev/impit) (Native HTTP client with TLS/browser fingerprint impersonation), [Undici](https://undici.nodejs.org/) |
@@ -160,8 +160,7 @@ After you change dependencies, run `bun install`, then regenerate the Nix lock w
 ## 📋 Prerequisites
 
 Before setting up the project locally:
-- **Node.js**: Version `22.0.0` or higher (LTS recommended)
-- **Bun**: Version `1.1.0` or higher ([bun.sh](https://bun.sh/))
+- **Bun**: Version `1.4.2` or higher ([bun.sh](https://bun.sh/)). It is the only runtime: the vendored StreamCorner runner needs Bun.
 - **Git**: Installed and accessible from your terminal
 
 ---

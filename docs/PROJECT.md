@@ -1,7 +1,7 @@
 # Project: Nuvio Live Sports Plugin — Dynamic Host Routing, Thumbnail Repair, & E2E Sanity Testing
 
 ## Architecture
-Nuvio Live Sports Plugin is a Stremio v1 protocol addon built on Node.js `node:http` with an in-house router (`src/httpApp.js`). It aggregates live sports fixtures and 24/7 sports TV channels from multiple providers (StreamFree, PPV, DaddyLive, CdnLive, Ak47Live, SportyHunter, etc.), transforms them into Stremio catalogs/metadata/streams, and proxies media streams and images safely. Paths in this document are relative to the repository root (one level above `docs/`).
+Nuvio Live Sports Plugin is a Stremio v1 protocol addon that runs on Bun, using `node:http` with an in-house router (`src/httpApp.js`). It aggregates live sports fixtures and 24/7 sports TV channels from multiple providers (StreamFree, PPV, DaddyLive, CdnLive, Ak47Live, SportyHunter, etc.), transforms them into Stremio catalogs/metadata/streams, and proxies media streams and images safely. Paths in this document are relative to the repository root (one level above `docs/`).
 
 ### Key Subsystems:
 1. **Host & Routing Layer (`src/config.js`, `src/index.js`)**:

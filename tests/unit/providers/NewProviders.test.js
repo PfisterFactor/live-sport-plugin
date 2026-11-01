@@ -209,8 +209,80 @@ describe('DliveProvider schedule parsing', () => {
 });
 
 describe('StreamCornerProvider', () => {
+  const nowSec = () => Math.floor(Date.now() / 1000);
+
+  function makeProvider(lists, details = {}, embedIndiaProvider) {
+    const p = new StreamCornerProvider({ ...makeCradle(), embedIndiaProvider });
+    p.fetchData = {
+      fire: async (providerId, id) => (id ? details[`${providerId}/${id}`] : lists[providerId]),
+    };
+    return p;
+  }
+
+  const live = { stream_id: 'abc', event_name: 'Minnesota Vikings at Detroit Lions', category: 'AMERICAN FOOTBALL', league: 'NFL', timestamp: nowSec() - 3600, end_time: nowSec() + 3600 };
+
   it('uses only worker hosts from the pinned pool', () => {
     expect(StreamCornerProvider.WORKER_HOSTS.length).toBeGreaterThan(10);
     expect(StreamCornerProvider.WORKER_HOSTS).toContain('data.daniellemarsh444.workers.dev');
+  });
+
+  it('lists the catalog endpoints the live site requests', () => {
+    const p = makeProvider({});
+    expect(p.listEndpoints).toEqual(['admin', 'nfl', 'alpha', 'beta', '001', 'extra003', 'skygo']);
+  });
+
+  it('maps events from every endpoint and namespaces ids by endpoint', async () => {
+    const p = makeProvider({ nfl: [live], '001': [live] });
+    const matches = await p.getMatches();
+    expect(matches.map(m => m.id).sort()).toEqual(['sc_001_abc', 'sc_nfl_abc']);
+    const m = matches.find(x => x.id === 'sc_nfl_abc');
+    expect(m.category).toBe('american_football');
+    expect(m.status).toBe('live');
+    expect(m.sources).toEqual([{ source: 'streamcorner', id: 'nfl/abc' }]);
+  });
+
+  it('marks future events upcoming and drops ended ones', async () => {
+    const upcoming = { stream_id: 'up', event_name: 'Later', category: 'FOOTBALL', timestamp: nowSec() + 7200, end_time: null };
+    const endedWithEnd = { stream_id: 'e1', event_name: 'Over', category: 'FOOTBALL', timestamp: nowSec() - 6 * 3600, end_time: nowSec() - 3 * 3600 };
+    const endedNoEnd = { stream_id: 'e2', event_name: 'Over Too', category: 'FOOTBALL', timestamp: nowSec() - 6 * 3600, end_time: null };
+    const p = makeProvider({ alpha: [upcoming, endedWithEnd, endedNoEnd] });
+    const matches = await p.getMatches();
+    expect(matches.map(m => m.id)).toEqual(['sc_alpha_up']);
+    expect(matches[0].status).toBe('upcoming');
+  });
+
+  it('delegates embedindia-family embeds to the EmbedIndia resolver and keeps other embeds as web players', async () => {
+    const calls = [];
+    const embedIndia = {
+      resolveStream: async (url, category, title, src) => {
+        calls.push({ url, title, src });
+        return [{ name: 'EmbedIndia', url: 'http://proxy/manifest?x' }];
+      },
+    };
+    const p = makeProvider({}, {
+      'nfl/abc': {
+        streams: [
+          { source_name: 'HD (FOX | EN)', embed_url: 'https://taifood-blog.asia/embed/nfl/2026-11-01/min-det' },
+          { source_name: 'FOX NFL', embed_url: 'https://amazon.com.getsugatensho.sbs/adriana.html?p=abc' },
+        ],
+      },
+    }, embedIndia);
+    const streams = await p.resolveStream('nfl/abc', 'american_football', 'Vikings at Lions');
+    expect(calls).toEqual([{
+      url: 'https://taifood-blog.asia/embed/nfl/2026-11-01/min-det',
+      title: 'Vikings at Lions (HD (FOX | EN))',
+      src: { embedUrl: 'https://taifood-blog.asia/embed/nfl/2026-11-01/min-det' },
+    }]);
+    expect(streams[0].url).toBe('http://proxy/manifest?x');
+    expect(streams[1].title).toBe('Vikings at Lions (FOX NFL) (Web Player)');
+    expect(streams[1].externalUrl).toContain(encodeURIComponent('https://amazon.com.getsugatensho.sbs/adriana.html?p=abc'));
+  });
+
+  it('serves explicit HLS stream_url sources with the site referer headers', async () => {
+    const p = makeProvider({}, { 'alpha/x': { streams: [{ source_name: 'Direct', stream_url: 'https://cdn.example/a.m3u8' }, { stream_url: 'https://cdn.example/a.mpd' }] } });
+    const streams = await p.resolveStream('alpha/x', 'football', 'Match');
+    expect(streams).toHaveLength(1);
+    expect(streams[0].url).toBe('https://cdn.example/a.m3u8');
+    expect(streams[0].behaviorHints.proxyHeaders.request.Referer).toBe('https://streamcorner.st/');
   });
 });

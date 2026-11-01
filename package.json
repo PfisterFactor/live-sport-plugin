@@ -4,20 +4,20 @@
   "description": "The ultimate live sports streaming add-on for Nuvio/Stremio. Scrapes multiple high-speed providers with a zero-lag proxy.",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch-path=src src/index.js",
+    "start": "bun src/index.js",
+    "dev": "bun --watch src/index.js",
     "test": "bun test tests/unit",
-    "test:sanity": "node scripts/test-sanity-zero-cache.js",
-    "test:e2e-client": "node scripts/test-e2e-simulated-client.js",
-    "test:247": "node scripts/test-247-channels.js",
-    "check-sources": "node scripts/check-sources.js"
+    "test:sanity": "bun scripts/test-sanity-zero-cache.js",
+    "test:e2e-client": "bun scripts/test-e2e-simulated-client.js",
+    "test:247": "bun scripts/test-247-channels.js",
+    "check-sources": "bun scripts/check-sources.js"
   },
   "dependencies": {
     "impit": "0.14.4",
     "undici": "8.10.2"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "bun": ">=1.4.2"
   },
   "keywords": [
     "nuvio",

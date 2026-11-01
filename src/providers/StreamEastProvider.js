@@ -24,6 +24,11 @@ const SECTION_CATEGORY = {
 const CARD_RE = /<(?:div|a) class="m-card(?: [^"]*)?"([^>]*\bdata-mac-id="[^"]*"[^>]*)>/g;
 const SERVER_RE = /<a class="stream-alt-item([^"]*)" href="([^"]+)">([\s\S]*?)<\/a>/g;
 const PLAYER_IFRAME_RE = /<iframe[^>]*\bid="iframe"[^>]*\bsrc="([^"]+)"/i;
+/** Numbered DaddyLive channel players: /stream/stream-N.php and /premiumtv/daddy.php?id=N. */
+const DADDY_CHANNEL_RE = /\/stream-(\d+)\.php(?:[?#]|$)|\/daddy\.php\?(?:[^#]*&)?id=(\d+)/i;
+/** Config-driven player pages: a signed playback config URL and the nested /embed/ iframe that carries it. */
+const CONFIG_ATTR_RE = /data-config="([^"]*\/playback\/[^"]+)"/i;
+const NESTED_PLAYER_RE = /<iframe[^>]+src="([^"]*\/embed\/[^"]+)"/i;
 
 function attr(attrs, name) {
   const m = attrs.match(new RegExp(`\\b${name}="([^"]*)"`));
@@ -151,9 +156,71 @@ class StreamEastProvider extends BaseProvider {
     return /^https?:/i.test(url) ? url : null;
   }
 
+  async _fetchText(url, referer) {
+    const res = await this.proxyFetch(url, {
+      headers: { 'User-Agent': DEFAULT_UA, 'Referer': referer },
+      timeoutMs: 8000,
+    });
+    return res.ok ? await res.text() : null;
+  }
+
+  /**
+   * Manifest for config-driven players (embedme.st -> optimserve.shop/embed/x):
+   * the player page names a signed JSON config whose first source is the
+   * master playlist. Null when the embed is not that kind of player.
+   */
+  async _configPlayerManifest(embedUrl) {
+    const wrapper = await this._fetchText(embedUrl, `${this.baseUrl}/`);
+    if (!wrapper) return null;
+    let playerUrl = embedUrl;
+    let html = wrapper;
+    if (!CONFIG_ATTR_RE.test(wrapper)) {
+      const nested = wrapper.match(NESTED_PLAYER_RE);
+      if (!nested) return null;
+      playerUrl = new URL(decodeHtmlEntities(nested[1]), embedUrl).toString();
+      html = await this._fetchText(playerUrl, new URL(embedUrl).origin + '/');
+      if (!html) return null;
+    }
+    const configUrl = (html.match(CONFIG_ATTR_RE) || [])[1];
+    if (!configUrl) return null;
+    const playerOrigin = `${new URL(playerUrl).origin}/`;
+    const config = JSON.parse(await this._fetchText(decodeHtmlEntities(configUrl), playerOrigin));
+    const m3u8 = Array.isArray(config.sources) ? config.sources.find((s) => /\.m3u8(\?|$)/i.test(s)) : null;
+    return m3u8 ? { m3u8, referer: playerOrigin } : null;
+  }
+
   /** Re-mints a signed manifest from a server's player iframe (StreamRenewal contract). */
   async extractM3u8(embedUrl) {
-    return this.dliveProvider.extractM3u8(embedUrl);
+    let configured = null;
+    try {
+      configured = await this._configPlayerManifest(embedUrl);
+    } catch (_) { /* not a config player */ }
+    return configured || this.dliveProvider.extractM3u8(embedUrl);
+  }
+
+  /** DaddyLive channel id when the player iframe embeds one of its numbered channels. */
+  static daddyChannelId(embedUrl) {
+    const m = String(embedUrl).match(DADDY_CHANNEL_RE);
+    return m ? (m[1] || m[2]) : null;
+  }
+
+  /**
+   * Playable manifest for a player iframe, or null. DaddyLive channel embeds
+   * go through DliveProvider's current routes (the player's own CDN serves
+   * image-wrapped segments); other embeds are extracted and probed.
+   */
+  async _playableManifest(embedUrl) {
+    const channelId = StreamEastProvider.daddyChannelId(embedUrl);
+    if (channelId) {
+      for (let attempt = 0; attempt < StreamEastProvider.DADDY_ATTEMPTS; attempt++) {
+        const resolved = await this.dliveProvider._resolveChannel(channelId);
+        if (resolved) return resolved;
+      }
+      return null;
+    }
+    const extracted = await this.extractM3u8(embedUrl);
+    if (!extracted || !(await this.dliveProvider._manifestPlays(extracted.m3u8, extracted.referer))) return null;
+    return { ...extracted, embedUrl };
   }
 
   async _resolveServer(server, eventHtml, matchTitle) {
@@ -168,16 +235,16 @@ class StreamEastProvider extends BaseProvider {
       const html = server.active ? eventHtml : await this._fetchSitePage(server.path);
       const embedUrl = StreamEastProvider.playerIframe(html);
       if (!embedUrl) return null;
-      const extracted = await this.extractM3u8(embedUrl);
-      if (!extracted) return webPlayer();
+      const resolved = await this._playableManifest(embedUrl);
+      if (!resolved) return webPlayer();
       return new StreamEntity({
         name: this.name,
         title: `${matchTitle} (${server.label})`,
         url: manifestProxyUrl({
-          url: extracted.m3u8,
-          referer: extracted.referer,
+          url: resolved.m3u8,
+          referer: resolved.referer,
           renew: this.sourceName,
-          embed: embedUrl,
+          embed: resolved.embedUrl,
         }),
         behaviorHints: { notWebReady: true },
         resolution: 'HD',
@@ -204,5 +271,8 @@ class StreamEastProvider extends BaseProvider {
 
 /** Free servers resolved per event; the site lists four. */
 StreamEastProvider.MAX_SERVERS = 4;
+
+/** DaddyLive channel resolutions per server: a freshly minted token's first probe often times out. */
+StreamEastProvider.DADDY_ATTEMPTS = 3;
 
 module.exports = StreamEastProvider;

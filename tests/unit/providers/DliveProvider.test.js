@@ -220,11 +220,6 @@ describe('DliveProvider embed resolution', () => {
     expect(r.url).toBe('https://hls.hockey.do/a.m3u8?e=1&sig=zz');
   });
 
-  it('ignores TikTok-cloaked manifests', async () => {
-    const html = '<script>var u="https://cowedd4855ws.tiktokcdn.com/x.m3u8"</script>';
-    expect(await p._resolveFromHtml(html, 'https://x.example/e', 2)).toBeNull();
-  });
-
   it('follows a JSON player hop using the id from loadPlayerChannel, not the template', async () => {
     const calls = pageMap({
       'https://vertex.st/api/player.php?id=91': JSON.stringify({ url: 'https://play.matchli.st/embed/91' }),
@@ -323,17 +318,52 @@ describe('DliveProvider channel probing', () => {
     expect(await p._resolveChannel('91')).toBeNull();
   });
 
+  describe('tsOffset', () => {
+    const media = (offset, length = 1024) => {
+      const b = Buffer.alloc(length, 0x11);
+      for (let i = offset; i < length; i += 188) b[i] = 0x47;
+      return b;
+    };
+
+    it('finds the TS run at offset 0, behind a 42-byte WEBP or 64-byte PNG header, and at the last allowed offset', () => {
+      expect(DliveProvider.tsOffset(media(0))).toBe(0);
+      expect(DliveProvider.tsOffset(media(42))).toBe(42);
+      expect(DliveProvider.tsOffset(media(64))).toBe(64);
+      expect(DliveProvider.tsOffset(media(187))).toBe(187);
+    });
+
+    it('rejects a run starting at 188 or later, pixel-packed bodies and short bodies', () => {
+      expect(DliveProvider.tsOffset(media(188, 2048))).toBe(-1);
+      expect(DliveProvider.tsOffset(Buffer.alloc(1024, 0x47).fill(0x80, 0, 1024))).toBe(-1);
+      expect(DliveProvider.tsOffset(Buffer.from('#EXTM3U'))).toBe(-1);
+      expect(DliveProvider.tsOffset(media(0, 300))).toBe(-1);
+    });
+  });
+
+  describe('_segmentHead', () => {
+    it('reads only the probe size from a server that ignores Range', async () => {
+      const server = Bun.serve({ port: 0, fetch: () => new Response(Buffer.alloc(200000, 0x47)) });
+      try {
+        const head = await p._segmentHead(`http://127.0.0.1:${server.port}/s.ts`, { Referer: 'https://emb.example/' });
+        expect(head.status).toBe(200);
+        expect(head.bytes.length).toBe(DliveProvider.SEGMENT_PROBE_BYTES);
+      } finally {
+        server.stop(true);
+      }
+    });
+  });
+
   describe('_manifestPlays', () => {
     const savedWarmup = DliveProvider.WARMUP_MS;
-    beforeEach(() => { DliveProvider.WARMUP_MS = 0; });
+    const ts = Buffer.alloc(1024, 0x11);
+    for (let i = 42; i < ts.length; i += 188) ts[i] = 0x47;
+    const okSegment = async () => ({ status: 206, bytes: ts });
+    beforeEach(() => { DliveProvider.WARMUP_MS = 0; p._segmentHead = okSegment; });
     afterEach(() => { DliveProvider.WARMUP_MS = savedWarmup; });
 
     it('re-probes a 404 playlist once and accepts it when the channel has started', async () => {
       let hits = 0;
-      p.proxyFetch = async (url) => {
-        if (url.endsWith('.m3u8')) return hits++ === 0 ? res({ status: 404 }) : res({ body: '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' });
-        return res({ status: 206, body: 'x' });
-      };
+      p.proxyFetch = async () => (hits++ === 0 ? res({ status: 404 }) : res({ body: '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' }));
       expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(true);
       expect(hits).toBe(2);
     });
@@ -345,38 +375,45 @@ describe('DliveProvider channel probing', () => {
       expect(hits).toBe(1);
     });
 
-    it('accepts a playlist with real segments and sends the referer', async () => {
+    it('accepts a playlist whose segment carries TS behind an image header and sends the referer', async () => {
       let seen;
-      p.proxyFetch = async (url, opts) => { seen = opts.headers; return res({ body: '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' }); };
+      let segUrl;
+      p.proxyFetch = async (url, opts) => { seen = opts.headers; return res({ body: '#EXTM3U\n#EXTINF:4,\nhttps://p16-common-sign.tiktokcdn.com/x~tplv-tiktokx-origin.image\n' }); };
+      p._segmentHead = async (url, headers) => { segUrl = [url, headers]; return okSegment(); };
       expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(true);
       expect(seen.Referer).toBe('https://emb.example/');
+      expect(segUrl[0]).toBe('https://p16-common-sign.tiktokcdn.com/x~tplv-tiktokx-origin.image');
+      expect(segUrl[1].Referer).toBe('https://emb.example/');
     });
 
     it('follows a master playlist to its first variant and checks the first segment', async () => {
       const calls = [];
       p.proxyFetch = async (url) => {
         calls.push(url);
-        if (url.endsWith('master.m3u8')) return res({ body: '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv1/index.m3u8\n' });
-        if (url.endsWith('index.m3u8')) return res({ body: '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' });
-        return res({ status: 206, body: 'x' });
+        return res({ body: url.endsWith('master.m3u8') ? '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv1/index.m3u8\n' : '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' });
       };
+      p._segmentHead = async (url) => { calls.push(url); return okSegment(); };
       expect(await p._manifestPlays('https://cdn.example/master.m3u8', 'https://emb.example/')).toBe(true);
       expect(calls).toEqual(['https://cdn.example/master.m3u8', 'https://cdn.example/v1/index.m3u8', 'https://cdn.example/v1/seg1.ts']);
     });
 
     it('rejects a playlist whose first segment 404s or that lists no segments', async () => {
-      p.proxyFetch = async (url) => (url.endsWith('.ts') ? res({ status: 404 }) : res({ body: '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' }));
+      p.proxyFetch = async () => res({ body: '#EXTM3U\n#EXTINF:4,\nseg1.ts\n' });
+      p._segmentHead = async () => ({ status: 404, bytes: Buffer.alloc(0) });
       expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);
       p.proxyFetch = async () => res({ body: '#EXTM3U\n#EXT-X-ENDLIST\n' });
       expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);
     });
 
-    it('rejects 403 token walls, non-playlists, TikTok image segments and network errors', async () => {
+    it('rejects 403 walls, non-playlists, pixel-packed segments, 403 segments and network errors', async () => {
       p.proxyFetch = async () => res({ status: 403, body: 'token required' });
       expect(await p._manifestPlays('https://edge.example/a.m3u8', 'https://emb.example/')).toBe(false);
       p.proxyFetch = async () => res({ body: '<html>nope</html>' });
       expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);
-      p.proxyFetch = async () => res({ body: '#EXTM3U\n#EXTINF:6,\nhttps://p16-common-sign.tiktokcdn-us.com/tiktok-obj/x~tplv-tiktokx-origin.image\n' });
+      p.proxyFetch = async () => res({ body: '#EXTM3U\n#EXTINF:6,\nseg1.ts\n' });
+      p._segmentHead = async () => ({ status: 206, bytes: Buffer.alloc(1024, 0x80) });
+      expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);
+      p._segmentHead = async () => ({ status: 403, bytes: Buffer.alloc(0) });
       expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);
       p.proxyFetch = async () => { throw new Error('boom'); };
       expect(await p._manifestPlays('https://cdn.example/a.m3u8', 'https://emb.example/')).toBe(false);

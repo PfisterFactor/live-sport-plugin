@@ -19,8 +19,10 @@ const EVENT = `
 <iframe id="iframe" width="100%" src="https://streame.center/stream-east/ch30.php" referrerpolicy="origin"></iframe>
 `;
 
-function makeProvider(pages, extract) {
-  const p = new StreamEastProvider(makeCradle({ dliveProvider: { extractM3u8: extract } }));
+function makeProvider(pages, extract, dlive = {}) {
+  const p = new StreamEastProvider(makeCradle({
+    dliveProvider: { extractM3u8: extract, _manifestPlays: async () => true, ...dlive },
+  }));
   p.proxyFetch = async (url) => (url in pages ? res({ body: pages[url] }) : res({ status: 404 }));
   return p;
 }
@@ -74,5 +76,62 @@ describe('StreamEastProvider.resolveStream', () => {
 
     expect(streams[1].title).toBe('X vs Y (Server 2) (Web Player)');
     expect(streams[1].externalUrl).toBe(`${base}/nfl/x-vs-y/2`);
+  });
+});
+
+describe('StreamEastProvider DaddyLive and probing', () => {
+  it('extracts the channel id from daddy player iframes', () => {
+    expect(StreamEastProvider.daddyChannelId('https://thedaddy.pk/stream/stream-19.php')).toBe('19');
+    expect(StreamEastProvider.daddyChannelId('https://dembed.st/premiumtv/daddy.php?id=7')).toBe('7');
+    expect(StreamEastProvider.daddyChannelId('https://streamec.st/stream-east/ch36.php')).toBeNull();
+  });
+
+  it('resolves daddy channel embeds through the dlive provider and drops manifests that do not play', async () => {
+    const base = 'https://v2.streameast.ga';
+    const pages = {
+      [`${base}/nfl/x-vs-y/`]: '<a class="stream-alt-item active" href="/nfl/x-vs-y/1">A</a><a class="stream-alt-item" href="/nfl/x-vs-y/2">B</a><iframe id="iframe" src="https://thedaddy.pk/stream/stream-19.php"></iframe>',
+      [`${base}/nfl/x-vs-y/2`]: '<iframe id="iframe" src="https://streamec.st/stream-east/ch36.php"></iframe>',
+    };
+    const channels = [];
+    const p = makeProvider(
+      pages,
+      async () => ({ m3u8: 'https://edgestream3.pro/sh/cdn/hls/a.m3u8', referer: 'https://streame.center/' }),
+      {
+        _resolveChannel: async (id) => {
+          channels.push(id);
+          return { m3u8: 'https://cdn.example/hls/a.m3u8?s=1', referer: 'https://assetrage.net/', embedUrl: 'https://tossequip.net/e/abc' };
+        },
+        _manifestPlays: async () => false,
+      },
+    );
+
+    const streams = await p.resolveStream('/nfl/x-vs-y/', 'american_football', 'X vs Y');
+    expect(channels).toEqual(['19']);
+    const q = new URL(streams[0].url).searchParams;
+    expect(q.get('url')).toBe('https://cdn.example/hls/a.m3u8?s=1');
+    expect(q.get('referer')).toBe('https://assetrage.net/');
+    expect(q.get('embed')).toBe('https://tossequip.net/e/abc');
+    expect(streams[1].title).toBe('X vs Y (B) (Web Player)');
+    expect(streams[1].externalUrl).toBe(`${base}/nfl/x-vs-y/2`);
+  });
+
+  it('resolves a config-driven player (embedme -> optimserve) and keeps the player origin as referer', async () => {
+    const pages = {
+      'https://embedme.st/player/g.php': '<main><iframe id="iframe" src="https://optimserve.shop/embed/nflhd4"></iframe></main>',
+      'https://optimserve.shop/embed/nflhd4': '<script data-config="https://optimserve.shop/playback/47/config?engine=jwplayer&amp;signature=ab"></script>',
+      'https://optimserve.shop/playback/47/config?engine=jwplayer&signature=ab': JSON.stringify({ sources: ['https://gate4.st/live/f5x4nb/master.m3u8?st=t&e=1'] }),
+    };
+    const probed = [];
+    const p = makeProvider(pages, async () => null, {
+      _manifestPlays: async (m3u8, referer) => { probed.push([m3u8, referer]); return true; },
+    });
+
+    const resolved = await p._playableManifest('https://embedme.st/player/g.php');
+    expect(resolved).toEqual({
+      m3u8: 'https://gate4.st/live/f5x4nb/master.m3u8?st=t&e=1',
+      referer: 'https://optimserve.shop/',
+      embedUrl: 'https://embedme.st/player/g.php',
+    });
+    expect(probed).toEqual([['https://gate4.st/live/f5x4nb/master.m3u8?st=t&e=1', 'https://optimserve.shop/']]);
   });
 });

@@ -20,7 +20,7 @@
       packages = forAllSystems (pkgs: b2n:
         let
           inherit (pkgs) lib stdenv;
-          nodejs = pkgs.nodejs-slim_22;
+          bun = pkgs.bun;
           fs = lib.fileset;
 
           app = stdenv.mkDerivation {
@@ -54,9 +54,9 @@
               # and autoPatchelf cannot satisfy the musl addon.
               rm -rf node_modules/impit-linux-*-musl
               cp -r package.json src public node_modules $share/
-              makeWrapper ${lib.getExe nodejs} $out/bin/live-sport-plugin \
+              makeWrapper ${lib.getExe bun} $out/bin/live-sport-plugin \
                 --add-flags $share/src/index.js \
-                --prefix PATH : ${lib.makeBinPath [ nodejs ]} \
+                --prefix PATH : ${lib.makeBinPath [ bun ]} \
                 --set-default NODE_ENV production
               runHook postInstall
             '';
@@ -84,7 +84,7 @@
 
       devShells = forAllSystems (pkgs: b2n: {
         default = pkgs.mkShell {
-          packages = [ pkgs.nodejs_22 pkgs.bun b2n ];
+          packages = [ pkgs.bun b2n ];
         };
       });
     };

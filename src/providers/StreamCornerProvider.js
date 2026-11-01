@@ -5,18 +5,26 @@ const StreamEntity = require('../domain/StreamEntity');
 const { runProviderScript } = require('./runner');
 const path = require('path');
 
+/** Embeds on the embedindia family (taifood-blog.asia, ...) resolve to signed m3u8 via EmbedIndiaProvider. */
+const EMBEDINDIA_PATH_RE = /^https?:\/\/[^/]+\/embed(?:-noads)?\//;
+
 /**
  * streamcorner.st. The site's SPA loads its catalog from a pool of
- * Cloudflare Worker endpoints that speak an obfuscated request/response
- * codec; the codec ships in the site's own provider-data service worker,
- * vendored here as streamcorner_worker.js and executed out-of-process.
+ * Cloudflare Worker endpoints. Requests are signed and replies decoded by the
+ * site's own provider-data worker, vendored under ./streamcorner and executed
+ * out-of-process by run_streamcorner_native.js.
  */
 class StreamCornerProvider extends BaseProvider {
   constructor(opts) {
     super(opts);
     this.name = 'StreamCorner';
     this.refererOrigin = 'https://streamcorner.st';
-    this.listEndpoints = ['alpha', 'beta', 'extra003', 'extra004', 'skygo'];
+    this.embedIndiaProvider = opts.embedIndiaProvider;
+    this.listEndpoints = ['admin', 'nfl', 'alpha', 'beta', '001', 'extra003', 'skygo'];
+    // Events are dropped this long after their end time, or after a fixed
+    // window from kickoff when the catalog gives no end time.
+    this.endedGraceMs = 2 * 60 * 60 * 1000;
+    this.unknownDurationMs = 5 * 60 * 60 * 1000;
 
     this.fetchData = this.circuitBreaker.wrap(`${this.name}_fetchData`, async (providerId, id) => {
       const hosts = StreamCornerProvider.WORKER_HOSTS.slice();
@@ -28,7 +36,8 @@ class StreamCornerProvider extends BaseProvider {
       const urls = hosts.slice(0, 5).map(h => `https://${h}/corner${query}`);
 
       const scriptPath = path.join(__dirname, 'run_streamcorner_native.js');
-      const stdout = await runProviderScript(scriptPath, [providerId, JSON.stringify(urls)]);
+      const operation = id ? 'provider-detail' : 'provider-list';
+      const stdout = await runProviderScript(scriptPath, [operation, providerId, JSON.stringify(urls)]);
       const marker = stdout.indexOf('SCDATA:');
       const end = stdout.indexOf(':SCEND', marker);
       if (marker < 0 || end < 0) throw new Error('worker produced no data');
@@ -38,6 +47,7 @@ class StreamCornerProvider extends BaseProvider {
 
   async getMatches() {
     const matches = [];
+    const now = Date.now();
     try {
       const results = await Promise.allSettled(
         this.listEndpoints.map(p => this.fetchData.fire(p))
@@ -50,12 +60,14 @@ class StreamCornerProvider extends BaseProvider {
         for (const ev of result.value) {
           if (!ev || !ev.stream_id || !ev.event_name) continue;
           const startsMs = Number(ev.timestamp) > 0 ? Number(ev.timestamp) * 1000 : 0;
+          const endsMs = Number(ev.end_time) > 0 ? Number(ev.end_time) * 1000 : 0;
+          if (endsMs > 0 ? endsMs + this.endedGraceMs < now : startsMs > 0 && startsMs + this.unknownDurationMs < now) continue;
 
           matches.push(new MatchEntity({
             id: `sc_${providerId}_${ev.stream_id}`,
             title: ev.event_name,
             category: this.mapCategoryLabel(ev.category),
-            status: startsMs && startsMs > Date.now() ? 'upcoming' : 'live',
+            status: startsMs && startsMs > now ? 'upcoming' : 'live',
             date: startsMs ? String(startsMs) : '',
             popular: '0',
             poster: ev.poster || '',
@@ -84,6 +96,14 @@ class StreamCornerProvider extends BaseProvider {
       const sources = (ev && ev.streams) || [];
 
       for (const s of sources) {
+        if (s && !s.stream_url && s.embed_url && this.embedIndiaProvider && EMBEDINDIA_PATH_RE.test(s.embed_url)) {
+          const label = s.source_name ? `${matchTitle} (${s.source_name})` : matchTitle;
+          const resolved = await this.embedIndiaProvider.resolveStream(
+            s.embed_url, matchCategory, label, { embedUrl: s.embed_url }
+          );
+          if (Array.isArray(resolved)) streams.push(...resolved);
+          continue;
+        }
         if (s && !s.stream_url && s.embed_url) {
           const label = s.source_name ? `${matchTitle} (${s.source_name})` : matchTitle;
           streams.push(new StreamEntity({

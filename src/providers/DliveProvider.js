@@ -49,11 +49,6 @@ function stripEmoji(str) {
   return String(str || '').replace(EMOJI_RE, '').replace(/\s+/g, ' ').trim();
 }
 
-/** Streams cloaked as TikTok CDN video are a PNG with an .m3u8 name, not a feed. */
-function isTikTokCloakedStream(url) {
-  return typeof url === 'string' && /cowedd4855ws|tiktokcdn|tiktokx-origin/i.test(url);
-}
-
 /**
  * Unescape a manifest URL lifted out of inline JSON ("\\u0026" separators,
  * "\\/" slashes) so the signed query string survives intact.
@@ -459,14 +454,13 @@ class DliveProvider extends BaseProvider {
    */
   async _resolveFromHtml(html, pageUrl, depth = 0) {
     if (!html || typeof html !== 'string') return null;
-    const usable = (u) => u && !isTikTokCloakedStream(u);
 
     const econfig = html.match(/_econfig\s*=\s*['"]([A-Za-z0-9+/=]+)['"]/);
     if (econfig) {
       try {
         const config = DliveProvider.decodeEmbedConfig(econfig[1]);
         const url = config && (config.stream_url_nop2p || config.stream_url);
-        if (usable(url)) return { url: cleanManifestUrl(url), referer: pageUrl, strategy: 'econfig' };
+        if (url) return { url: cleanManifestUrl(url), referer: pageUrl, strategy: 'econfig' };
       } catch (err) {
         console.error(`[${this.name}] embed config decode failed for ${pageUrl}:`, err.message);
       }
@@ -480,7 +474,7 @@ class DliveProvider extends BaseProvider {
       ['escaped', (html.match(/(https?:\\\/\\\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i) || [])[1]],
     ];
     for (const [strategy, url] of candidates) {
-      if (usable(url)) return { url: cleanManifestUrl(url), referer: pageUrl, strategy };
+      if (url) return { url: cleanManifestUrl(url), referer: pageUrl, strategy };
     }
 
     if (depth >= DliveProvider.MAX_EMBED_DEPTH) return null;
@@ -585,37 +579,81 @@ class DliveProvider extends BaseProvider {
   }
 
   /**
+   * Offset of the first MPEG-TS packet run (0x47 at i, i+188, i+376) within
+   * the first 188 bytes, or -1. Image-cloaked CDN segments (WEBP/PNG header
+   * before the TS) pass; pixel-packed or non-media bodies do not.
+   *
+   * @param {Uint8Array} bytes
+   */
+  static tsOffset(bytes) {
+    const limit = Math.min(188, bytes.length - 2 * 188);
+    for (let i = 0; i < limit; i++) {
+      if (bytes[i] === 0x47 && bytes[i + 188] === 0x47 && bytes[i + 376] === 0x47) return i;
+    }
+    return -1;
+  }
+
+  /**
    * Classify one manifest: 'ok' when it answers 200 with a playlist whose
-   * first segment is fetchable real media (a master playlist is followed one
-   * level to its first variant), 'warming' when the playlist or its first
-   * segment is 404 (on-demand transcoders publish nothing until the embed has
-   * been opened), 'dead' otherwise. Token walls (403), TikTok image-wrapped
-   * segments and non-playlists are dead.
+   * first segment starts a TS packet run within its first 188 bytes (a master
+   * playlist is followed one level to its first variant), 'warming' when the
+   * playlist or its first segment is 404 (on-demand transcoders publish
+   * nothing until the embed has been opened), 'dead' otherwise. Token walls
+   * (403), pixel-packed segments and non-playlists are dead.
    */
   async _probeManifest(m3u8, referer, depth = 0) {
     try {
       const headers = { 'User-Agent': DLIVE_UA };
       if (referer) headers.Referer = referer;
-      const res = await this.proxyFetch(m3u8, { headers, timeoutMs: 6000 });
+      const res = await this.proxyFetch(m3u8, { headers, timeoutMs: DliveProvider.PROBE_TIMEOUT_MS });
       if (res.status === 404) return 'warming';
       if (!res.ok) return 'dead';
       const body = await res.text();
       if (!body.includes('#EXTM3U')) return 'dead';
       const uris = body.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
       if (uris.length === 0) return 'warming';
-      if (uris.some((line) => isTikTokCloakedStream(line))) return 'dead';
 
       const first = new URL(uris[0], m3u8).toString();
       if (body.includes('#EXT-X-STREAM-INF')) {
         return depth < 1 ? await this._probeManifest(first, referer, depth + 1) : 'dead';
       }
-      const seg = await this.proxyFetch(first, { headers: { ...headers, Range: 'bytes=0-1023' }, timeoutMs: 6000 });
-      if (seg.ok) return 'ok';
-      return seg.status === 404 ? 'warming' : 'dead';
+      const head = await this._segmentHead(first, headers);
+      if (head.status === 404) return 'warming';
+      if (head.status < 200 || head.status >= 300) return 'dead';
+      return DliveProvider.tsOffset(head.bytes) >= 0 ? 'ok' : 'dead';
     } catch (_) {
       return 'dead';
     }
   }
+
+  /**
+   * First SEGMENT_PROBE_BYTES of a segment as raw bytes (proxyFetch only
+   * exposes decoded text). A server that ignores Range and answers 200 with
+   * the whole body is read only up to the probe size.
+   *
+   * @returns {Promise<{status: number, bytes: Buffer}>}
+   */
+  async _segmentHead(url, headers) {
+    const want = DliveProvider.SEGMENT_PROBE_BYTES;
+    const res = await fetch(url, {
+      headers: { ...headers, Range: `bytes=0-${want - 1}` },
+      signal: AbortSignal.timeout(DliveProvider.PROBE_TIMEOUT_MS),
+    });
+    const chunks = [];
+    let got = 0;
+    if (res.ok && res.body) {
+      const reader = res.body.getReader();
+      while (got < want) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(Buffer.from(value));
+        got += value.length;
+      }
+      await reader.cancel().catch(() => {});
+    }
+    return { status: res.status, bytes: Buffer.concat(chunks).subarray(0, want) };
+  }
+
 
   /**
    * True when the manifest plays. A 'warming' manifest is probed once more
@@ -704,5 +742,10 @@ DliveProvider.CHANNEL_BUDGET_MS = 20000;
 
 /** Pause before re-probing a manifest that 404s because its channel is still starting. */
 DliveProvider.WARMUP_MS = 3000;
+/** The 7odxv0l067ka.net edge has been seen taking 6 s per request under load. */
+DliveProvider.PROBE_TIMEOUT_MS = 12000;
+
+/** Bytes of a segment fetched to look for the TS packet run. */
+DliveProvider.SEGMENT_PROBE_BYTES = 1024;
 
 module.exports = DliveProvider;
