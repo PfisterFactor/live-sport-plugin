@@ -275,7 +275,7 @@ class DamiTvProvider extends BaseProvider {
     const proxied = (upstream, resolution) => new StreamEntity({
       name: this.name,
       title: matchTitle,
-      url: manifestProxyUrl({ url: upstream, referer: `${ORIGIN}/`, origin: ORIGIN }),
+      url: manifestProxyUrl({ url: upstream, referer: `${ORIGIN}/`, origin: ORIGIN, proxySegments: true }),
       behaviorHints: { notWebReady: true },
       resolution,
     });

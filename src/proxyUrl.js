@@ -15,8 +15,9 @@ const { BASE_URL } = require('./config');
  * @param {string} [opts.origin] origin header; defaults to the referer's origin
  * @param {string} [opts.renew]  renewal source name registered in StreamRenewal
  * @param {string} [opts.embed]  embed page the renewal source re-extracts from
+ * @param {boolean} [opts.proxySegments] relay every segment through /api/segment, for image-wrapped segments or CDNs that refuse clients without the Referer
  */
-function manifestProxyUrl({ url, referer, origin, renew, embed }) {
+function manifestProxyUrl({ url, referer, origin, renew, embed, proxySegments }) {
   let resolvedOrigin = origin;
   if (!resolvedOrigin) {
     try { resolvedOrigin = new URL(referer).origin; } catch (_) { resolvedOrigin = referer; }
@@ -27,6 +28,7 @@ function manifestProxyUrl({ url, referer, origin, renew, embed }) {
   if (renew && embed) {
     out += `&renew=${encodeURIComponent(renew)}&embed=${encodeURIComponent(embed)}`;
   }
+  if (proxySegments) out += '&seg=1';
   return out;
 }
 

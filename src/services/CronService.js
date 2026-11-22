@@ -23,6 +23,7 @@ class CronService {
       const activeMatches = await this.matchAggregator.syncMatches();
       if (activeMatches !== null) {
         this.pruneStreamCache(activeMatches);
+        this.prewarmPopular().catch((err) => console.error('[CronService] Post-sync prewarm failed:', err.message));
       }
     } finally {
       this.syncing = false;

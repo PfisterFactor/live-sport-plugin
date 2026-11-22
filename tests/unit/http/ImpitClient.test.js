@@ -1,5 +1,8 @@
 const { describe, it, expect, beforeAll, afterAll, afterEach, spyOn } = require('bun:test');
 
+/** Encodes a string as the ArrayBuffer an impit response body yields. */
+const bytesOf = (s) => new TextEncoder().encode(s).buffer;
+
 const impitClient = require('../../../src/impitClient');
 
 let echo;
@@ -43,7 +46,7 @@ describe('safeFetch impit path', () => {
     impitSpy = spyOn(impit(), 'fetch').mockImplementation(async () => ({
       status: 204,
       headers: new Headers({ 'X-Cache': 'HIT', 'Content-Type': 'application/vnd.apple.mpegurl' }),
-      text: async () => '#EXTM3U',
+      arrayBuffer: async () => bytesOf('#EXTM3U'),
     }));
 
     const res = await impitClient.safeFetch('https://cdn.example.com/a.m3u8');
@@ -57,7 +60,7 @@ describe('safeFetch impit path', () => {
 
   it('reports a non-2xx impit response as not ok rather than throwing', async () => {
     impitSpy = spyOn(impit(), 'fetch').mockImplementation(async () => ({
-      status: 403, headers: {}, text: async () => 'denied',
+      status: 403, headers: {}, arrayBuffer: async () => bytesOf('denied'),
     }));
     const res = await impitClient.safeFetch('https://cdn.example.com/a.m3u8');
     expect(res.ok).toBe(false);
@@ -68,7 +71,7 @@ describe('safeFetch impit path', () => {
     let seen;
     impitSpy = spyOn(impit(), 'fetch').mockImplementation(async (url, opts) => {
       seen = { url, opts };
-      return { status: 200, headers: {}, text: async () => '{"a":1}' };
+      return { status: 200, headers: {}, arrayBuffer: async () => bytesOf('{"a":1}') };
     });
     const res = await impitClient.safeFetch('https://cdn.example.com/p', {
       method: 'POST',
@@ -83,6 +86,20 @@ describe('safeFetch impit path', () => {
     impitSpy = spyOn(impit(), 'fetch').mockImplementation(async () => { throw new Error('napi boom'); });
     const res = await impitClient.safeFetch(`${echoUrl}/echo`);
     expect(impitSpy).toHaveBeenCalledTimes(3);
+    expect(res.status).toBe(200);
+  }, 15000);
+
+  it('rethrows an impit DNS failure at once when noFallbackOnNetworkError is set', async () => {
+    impitSpy = spyOn(impit(), 'fetch').mockImplementation(async () => {
+      throw new Error('Failed to connect: dns error: failed to lookup address information');
+    });
+    await expect(impitClient.safeFetch(`${echoUrl}/echo`, { noFallbackOnNetworkError: true })).rejects.toThrow('dns error');
+    expect(impitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('still falls back to undici for non-network impit failures with the flag set', async () => {
+    impitSpy = spyOn(impit(), 'fetch').mockImplementation(async () => { throw new Error('napi boom'); });
+    const res = await impitClient.safeFetch(`${echoUrl}/echo`, { noFallbackOnNetworkError: true });
     expect(res.status).toBe(200);
   }, 15000);
 });

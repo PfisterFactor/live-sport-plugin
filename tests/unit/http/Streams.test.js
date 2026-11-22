@@ -39,6 +39,8 @@ afterEach(() => {
   safeFetchSpy.mockRestore();
   delete process.env.STREAM_SOFT_DEADLINE_MS;
   delete process.env.STREAM_HARD_DEADLINE_MS;
+  delete process.env.STREAM_QUORUM;
+  delete process.env.STREAM_GRACE_MAX_MS;
 });
 
 describe('selectSources', () => {
@@ -164,19 +166,62 @@ describe('handleStream', () => {
   it('answers at the soft deadline with the sources that resolved in time', async () => {
     process.env.STREAM_SOFT_DEADLINE_MS = '60';
     process.env.STREAM_HARD_DEADLINE_MS = '5000';
+    process.env.STREAM_QUORUM = '0';
     fakes.cacheService = {
       getMatches: () => [matchWith({
         sources: [{ source: 'damitv', id: 'w-1' }, { source: 'cdnlive', id: 'c-1' }],
       })],
     };
     fakes.damiTvProvider = {
-      resolveStream: () => new Promise((resolve) => setTimeout(() => resolve([{ url: 'https://wf/slow.m3u8' }]), 3000)),
+      resolveStream: () => new Promise((resolve) => setTimeout(() => resolve([]), 3000).unref()),
     };
     fakes.cdnLiveProvider = { resolveStream: async () => [{ url: 'https://cdn/a.m3u8' }] };
 
     const started = Date.now();
     const { streams } = await handleStream('tv', 'nuvio_sport_m1');
     expect(Date.now() - started).toBeLessThan(1000);
+    expect(streams.map((s) => s._source)).toEqual(['cdnlive']);
+  });
+
+  it('keeps waiting past the soft deadline until a quorum of sources has settled', async () => {
+    process.env.STREAM_SOFT_DEADLINE_MS = '60';
+    process.env.STREAM_HARD_DEADLINE_MS = '5000';
+    process.env.STREAM_GRACE_MAX_MS = '2000';
+    process.env.STREAM_QUORUM = '0.6';
+    fakes.cacheService = {
+      getMatches: () => [matchWith({
+        sources: [{ source: 'damitv', id: 'w-1' }, { source: 'cdnlive', id: 'c-1' }, { source: 'streamic', id: 's-1' }],
+      })],
+    };
+    const after = (ms, url) => () => new Promise((resolve) => setTimeout(() => resolve([{ url }]), ms));
+    fakes.cdnLiveProvider = { resolveStream: after(20, 'https://cdn/a.m3u8') };
+    fakes.damiTvProvider = { resolveStream: after(200, 'https://wf/tail.m3u8') };
+    fakes.streamicProvider = { resolveStream: () => new Promise((resolve) => setTimeout(() => resolve([]), 3000).unref()) };
+
+    const started = Date.now();
+    const { streams } = await handleStream('tv', 'nuvio_sport_m1');
+    const took = Date.now() - started;
+    expect(took).toBeGreaterThanOrEqual(190);
+    expect(took).toBeLessThan(1000);
+    expect(streams.map((s) => s._source).sort()).toEqual(['cdnlive', 'damitv']);
+  });
+
+  it('gives up waiting for the quorum at the grace limit', async () => {
+    process.env.STREAM_SOFT_DEADLINE_MS = '40';
+    process.env.STREAM_HARD_DEADLINE_MS = '5000';
+    process.env.STREAM_GRACE_MAX_MS = '300';
+    process.env.STREAM_QUORUM = '1';
+    fakes.cacheService = {
+      getMatches: () => [matchWith({ sources: [{ source: 'damitv', id: 'w-1' }, { source: 'cdnlive', id: 'c-1' }] })],
+    };
+    fakes.cdnLiveProvider = { resolveStream: async () => [{ url: 'https://cdn/a.m3u8' }] };
+    fakes.damiTvProvider = { resolveStream: () => new Promise((resolve) => setTimeout(() => resolve([]), 3000).unref()) };
+
+    const started = Date.now();
+    const { streams } = await handleStream('tv', 'nuvio_sport_m1');
+    const took = Date.now() - started;
+    expect(took).toBeGreaterThanOrEqual(280);
+    expect(took).toBeLessThan(1000);
     expect(streams.map((s) => s._source)).toEqual(['cdnlive']);
   });
 

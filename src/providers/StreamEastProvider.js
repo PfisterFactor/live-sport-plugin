@@ -208,15 +208,17 @@ class StreamEastProvider extends BaseProvider {
       if (!html) return null;
       const resolved = await this._playableManifest(pageUrl, html);
       if (!resolved) return webPlayer();
+      const manifest = manifestProxyUrl({
+        url: resolved.m3u8,
+        referer: resolved.referer,
+        renew: this.sourceName,
+        embed: resolved.embedUrl,
+        proxySegments: true,
+      });
       return new StreamEntity({
         name: this.name,
         title: `${matchTitle} (${server.label})`,
-        url: manifestProxyUrl({
-          url: resolved.m3u8,
-          referer: resolved.referer,
-          renew: this.sourceName,
-          embed: resolved.embedUrl,
-        }),
+        url: manifest,
         behaviorHints: { notWebReady: true },
         resolution: 'HD',
       });

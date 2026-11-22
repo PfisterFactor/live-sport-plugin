@@ -29,6 +29,8 @@ const RENEWERS = {
   dlive: (embedUrl) => container.resolve('dliveProvider').extractM3u8(embedUrl),
   streameast: (embedUrl) => container.resolve('streamEastProvider').extractM3u8(embedUrl),
   timstreams: (embedUrl) => container.resolve('timStreamsProvider').extractM3u8(embedUrl),
+  pitsport: (embedUrl) => container.resolve('pitSportProvider').extractM3u8(embedUrl),
+  scorezone: (embedUrl) => container.resolve('scoreZoneProvider').extractM3u8(embedUrl),
   streamfree: (embedUrl, deadUrl) => container.resolve('streamFreeProvider').refreshSignedUrl(embedUrl, deadUrl),
 };
 

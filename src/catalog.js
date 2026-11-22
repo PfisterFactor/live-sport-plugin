@@ -9,7 +9,7 @@ const { extractTeamsFromTitle } = require('./services/TeamNameExtractor');
 const { filterReplayMatches, isReplayFilterDisabled } = require('./services/ReplayFilterService');
 
 // Sources whose matches qualify as replays.
-const REPLAY_SOURCES = new Set(['livetv']);
+const REPLAY_SOURCES = new Set(['livetv', 'mlblive']);
 
 const REPLAY_SPORT_IDS = ['football', 'motorsport', 'baseball', 'rugby', 'basketball', 'tennis', 'hockey', 'american_football'];
 
@@ -722,7 +722,7 @@ async function handleMeta(type, id, config) {
 
   // Prewarm: mint tokens for this match's top sources while the user is still
   // on the detail page, so the eventual click is near-instant. Fire-and-forget.
-  try { streams.prewarmMatch(match, config || {}).catch(() => {}); } catch (_) {}
+  try { streams.prewarmMatch(match, config || {}, Infinity).catch(() => {}); } catch (_) {}
 
   return { meta: mapMatchToMetaPreview(match, config || {}), cacheMaxAge: CATALOG_MAX_AGE, staleRevalidate: 300, staleError: 600 };
 }

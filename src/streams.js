@@ -29,6 +29,11 @@ const SOURCES = {
   dlive: { priority: 10, registration: 'dliveProvider', label: 'DaddyLive', defaultEnabled: true, passSrc: true, referer: 'https://thedaddy.li/' },
   streameast: { priority: 7, registration: 'streamEastProvider', label: 'StreamEast', defaultEnabled: true },
   timstreams: { priority: 9, registration: 'timStreamsProvider', label: 'TimStreams', defaultEnabled: true, passSrc: true },
+  pitsport: { priority: 3, registration: 'pitSportProvider', label: 'PitSport', defaultEnabled: true, passSrc: true, referer: 'https://embdlol.st/' },
+  scorezone: { priority: 6, registration: 'scoreZoneProvider', label: 'ScoreZone', defaultEnabled: true, passSrc: true, referer: 'https://scorezonetv.live/' },
+  sktech: { priority: 9, registration: 'skTechProvider', label: 'SK Tech', defaultEnabled: true, passSrc: true },
+  vavoo: { priority: 11, registration: 'vavooProvider', label: 'Vavoo', defaultEnabled: true, passSrc: true, referer: 'https://vavoo.to/' },
+  mlblive: { priority: 9, registration: 'mlbLiveProvider', label: 'MLBLive', defaultEnabled: true, passSrc: true },
   ak47live: { priority: 3, registration: 'ak47LiveProvider', label: 'Ak47Live', defaultEnabled: true, passSrc: true },
 };
 
@@ -119,7 +124,7 @@ const impitClient = require('./impitClient');
 // How long one verification ping may take, and how long all its retries may
 // take together. The total stays under handleStream's soft deadline so a
 // retrying verification can still make it into the first response.
-const VERIFY_TIMEOUT_MS = Number(process.env.VERIFY_TIMEOUT_MS || 5000);
+const VERIFY_TIMEOUT_MS = Number(process.env.VERIFY_TIMEOUT_MS || 3500);
 const VERIFY_TOTAL_BUDGET_MS = Number(process.env.VERIFY_TOTAL_BUDGET_MS || 9000);
 const VERIFY_ATTEMPTS = Number(process.env.VERIFY_ATTEMPTS || 3);
 
@@ -346,7 +351,10 @@ async function mintVerifiedSources(src, match, cacheKey) {
   return verifyStreams(minted, cacheKey, m3u8Parser, resolveCache);
 }
 
-// Prewarm: mint tokens for a match's top sources before the user clicks
+// Prewarm: mint tokens for a match's top sources before the user clicks. Pass
+// Infinity to mint every selected source, including slow ones a cold request
+// would miss; background passes stay at the default because a full fan-out
+// starves live requests for other matches.
 async function prewarmMatch(match, config, topN = 3) {
   try {
     if (!match || !match.sources || !match.sources.length) return;
@@ -372,19 +380,38 @@ function streamDeadlines() {
   return {
     soft: parseInt(process.env.STREAM_SOFT_DEADLINE_MS, 10) || 4500,
     hard: parseInt(process.env.STREAM_HARD_DEADLINE_MS, 10) || 12000,
+    // At the soft deadline, keep waiting (up to graceMax) until this fraction
+    // of the sources has settled, so a slow network does not cut the list to
+    // the first one or two results.
+    graceMax: parseInt(process.env.STREAM_GRACE_MAX_MS, 10) || 7000,
+    quorum: process.env.STREAM_QUORUM !== undefined && Number.isFinite(parseFloat(process.env.STREAM_QUORUM))
+      ? parseFloat(process.env.STREAM_QUORUM) : 0.6,
   };
 }
 
-/** Resolves when every task settles, or at a deadline `hasResult()` permits. */
+/**
+ * Resolves when every task settles, or at a deadline `hasResult()` permits.
+ * An early answer needs a result and, until graceMax, a quorum of settled tasks.
+ */
 async function settleWithin(tasks, hasResult) {
   if (tasks.length === 0) return;
-  const { soft, hard } = streamDeadlines();
+  const { soft, hard, graceMax, quorum } = streamDeadlines();
+  const start = Date.now();
+  const needed = Math.ceil(tasks.length * quorum);
+  let settled = 0;
   let finished = false;
-  const all = Promise.all(tasks).then(() => { finished = true; });
+  const all = Promise.all(tasks.map((t) => t.then(() => { settled += 1; }))).then(() => { finished = true; });
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref());
 
   await Promise.race([all, sleep(soft)]);
-  if (finished || hasResult()) return;
+  if (finished) return;
+  if (hasResult()) {
+    const graceEnd = start + Math.min(graceMax, hard);
+    while (!finished && settled < needed && Date.now() < graceEnd) {
+      await Promise.race([all, sleep(Math.min(100, graceEnd - Date.now()))]);
+    }
+    return;
+  }
   await Promise.race([all, sleep(Math.max(hard - soft, 0))]);
 }
 

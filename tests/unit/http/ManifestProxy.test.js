@@ -1,3 +1,4 @@
+const zlib = require('node:zlib');
 const { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn } = require('bun:test');
 
 const impitClient = require('../../../src/impitClient');
@@ -388,6 +389,7 @@ describe('PNG-wrapped segments', () => {
   const { decodePngSegment } = require('../../../src/services/PngSegmentDecoder');
   const realFetch = globalThis.fetch;
   afterEach(() => { globalThis.fetch = realFetch; });
+  const segmentPath = (url, referer = '', origin = '') => `/api/segment/${Buffer.from(JSON.stringify({ url, referer, origin })).toString('base64url')}.ts`;
 
   it('decodes KWP1-packed and bare TS payloads, with row filters', () => {
     const ts = tsBytes(40);
@@ -404,11 +406,29 @@ describe('PNG-wrapped segments', () => {
     expect(() => decodePngSegment(pngSegment(Buffer.alloc(300, 1)))).toThrow();
   });
 
+  it('trims a RIFF/WebP-style wrapper down to the first TS sync run', () => {
+    const ts = tsBytes(3);
+    const riff = Buffer.concat([Buffer.from('RIFF\x10\x00\x00\x00WEBPVP8 ', 'latin1'), Buffer.alloc(7, 0x20), ts]);
+    expect(decodePngSegment(riff).equals(ts)).toBe(true);
+    expect(decodePngSegment(ts).equals(ts)).toBe(true);
+  });
+
+  it('unwraps a TIKTIKPX + gzip payload carried in PNG pixels', () => {
+    const ts = tsBytes(3);
+    const gz = zlib.gzipSync(ts);
+    const header = Buffer.alloc(12);
+    header.write('TIKTIKPX', 0, 'latin1');
+    header.writeUInt32BE(gz.length, 8);
+    expect(decodePngSegment(pngSegment(Buffer.concat([header, gz]))).equals(ts)).toBe(true);
+  });
+
   it('routes segments of a flagged playlist through /api/segment and keeps others direct', async () => {
     const media = '#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nhttps://img.example.com/a.png\n';
     safeFetchSpy.mockImplementation(async () => upstream(media));
-    const flagged = await (await proxy(freshUrl(), '&png=1&referer=https%3A%2F%2Fr.example%2F')).text();
-    expect(flagged).toContain('/api/segment?url=https%3A%2F%2Fimg.example.com%2Fa.png');
+    const flagged = await (await proxy(freshUrl(), '&seg=1&referer=https%3A%2F%2Fr.example%2F')).text();
+    const token = flagged.match(/\/api\/segment\/([A-Za-z0-9_-]+)\.ts/);
+    expect(token).not.toBeNull();
+    expect(JSON.parse(Buffer.from(token[1], 'base64url').toString()).url).toBe('https://img.example.com/a.png');
     const plain = await (await proxy(freshUrl())).text();
     expect(plain).toContain('https://img.example.com/a.png');
     expect(plain).not.toContain('/api/segment');
@@ -417,29 +437,61 @@ describe('PNG-wrapped segments', () => {
   it('propagates the flag to variant playlists of a master', async () => {
     const master = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nv1.m3u8\n';
     safeFetchSpy.mockImplementation(async () => upstream(master));
-    const body = await (await proxy(freshUrl(), '&png=1')).text();
-    expect(body).toMatch(/\/api\/manifest\?url=.*&png=1/);
+    const body = await (await proxy(freshUrl(), '&seg=1')).text();
+    expect(body).toMatch(/\/api\/manifest\?url=.*&seg=1/);
   });
 
   it('serves the decoded transport stream as video/mp2t', async () => {
     const ts = tsBytes(20);
     const png = pngSegment(Buffer.concat([Buffer.from('KWP1'), Buffer.from([0, 0, 0x0e, 0xb0]), ts]));
-    const guardSpy = spyOn(guard, 'assertOutboundUrl').mockResolvedValue({ ok: true });
-    globalThis.fetch = (url, opts) => (String(url).startsWith(base)
-      ? realFetch(url, opts)
-      : Promise.resolve(new Response(png, { status: 200 })));
-    try {
-      const res = await fetch(`${base}/api/segment?url=${encodeURIComponent('https://img.example.com/a.png')}&referer=${encodeURIComponent('https://r.example/')}`);
-      expect(res.status).toBe(200);
-      expect(res.headers.get('content-type')).toBe('video/mp2t');
-      expect(Buffer.from(await res.arrayBuffer()).equals(ts)).toBe(true);
-    } finally {
-      guardSpy.mockRestore();
-    }
+    safeFetchSpy.mockImplementation(async () => ({ ok: true, status: 200, headers: {}, arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength) }));
+    const res = await fetch(`${base}${segmentPath('https://img.example.com/a.png', 'https://r.example/')}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('video/mp2t');
+    expect(Buffer.from(await res.arrayBuffer()).equals(ts)).toBe(true);
+    expect(safeFetchSpy.mock.calls[0][1].headers.Referer).toBe('https://r.example/');
+  });
+
+  it('appends a #.ts fragment to segments whose extension ffmpeg refuses, and leaves accepted ones alone', async () => {
+    safeFetchSpy.mockImplementation(async () => upstream(
+      '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nhttps://s.example/redirect/a.txt?path=x%2Fy.ts&.m3u8=\n#EXTINF:6,\nhttps://s.example/b.ts\n#EXTINF:6,\nhttps://s.example/c.m4s?x=1\n'
+    ));
+    const lines = (await (await proxy(freshUrl())).text()).split('\n').filter((l) => l.startsWith('https://s.example'));
+    expect(lines).toEqual([
+      'https://s.example/redirect/a.txt?path=x%2Fy.ts&.m3u8=#.ts',
+      'https://s.example/b.ts',
+      'https://s.example/c.m4s?x=1#.ts',
+    ]);
+  });
+
+  it('routes playlist URLs listed inside a media playlist, and bare URL lists, back through the proxy', async () => {
+    safeFetchSpy.mockImplementation(async () => upstream(
+      '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nhttps://s.example/inner/index.m3u8?t=1\n#EXTINF:6,\nhttps://s.example/seg.ts\n'
+    ));
+    const media = (await (await proxy(freshUrl())).text()).split('\n').filter((l) => l && !l.startsWith('#'));
+    expect(media[0].startsWith('/api/manifest?url=')).toBe(true);
+    expect(media[1]).toBe('https://s.example/seg.ts');
+
+    safeFetchSpy.mockImplementation(async () => upstream('#EXTM3U\nhttps://s.example/v/low.m3u8\nhttps://s.example/v/high.m3u8\n'));
+    const bare = (await (await proxy(freshUrl())).text()).split('\n').filter((l) => l && !l.startsWith('#'));
+    expect(bare.every((l) => l.startsWith('/api/manifest?url='))).toBe(true);
+  });
+
+  it('seg=1 relays every segment through /api/segment and passes the flag to variants', async () => {
+    safeFetchSpy.mockImplementation(async () => upstream('#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nhttps://s.example/a.txt?p=1\n'));
+    const body = await (await proxy(freshUrl(), '&seg=1&referer=https%3A%2F%2Fr.example%2F')).text();
+    const token = body.match(/\/api\/segment\/([A-Za-z0-9_-]+)\.ts/);
+    expect(token).not.toBeNull();
+    const decoded = JSON.parse(Buffer.from(token[1], 'base64url').toString());
+    expect(decoded.url).toBe('https://s.example/a.txt?p=1');
+    expect(decoded.referer).toBe('https://r.example/');
+
+    safeFetchSpy.mockImplementation(async () => upstream('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nv1.m3u8\n'));
+    expect(await (await proxy(freshUrl(), '&seg=1')).text()).toMatch(/\/api\/manifest\?url=.*&seg=1/);
   });
 
   it('rejects unsafe segment targets', async () => {
-    const res = await fetch(`${base}/api/segment?url=${encodeURIComponent('http://127.0.0.1/x.png')}`);
+    const res = await fetch(`${base}${segmentPath('http://127.0.0.1/x.png')}`);
     expect(res.status).toBe(400);
   });
 });

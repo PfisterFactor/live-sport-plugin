@@ -155,17 +155,49 @@ function setPlaylistHeaders(res) {
   res.setHeader('Cache-Control', 'no-store');
 }
 
+/** Segment extensions ffmpeg's HLS demuxer accepts by default (allowed_segment_extensions). */
+const FFMPEG_SEGMENT_EXTENSIONS = new Set([
+  '3gp', 'aac', 'avi', 'ac3', 'eac3', 'flac', 'mkv', 'm3u8', 'm4a', 'm4s', 'm4v', 'mpg',
+  'mov', 'mp2', 'mp3', 'mp4', 'mpeg', 'mpegts', 'ogg', 'ogv', 'oga', 'ts', 'vob', 'wav',
+]);
+
+/**
+ * Appends a `#.ts` fragment when the text after the URL's last dot is not an
+ * extension ffmpeg accepts for segments (".txt", ".image", ".js", or a query
+ * string that ends in ".m3u8="). The fragment is never sent upstream and other
+ * players ignore it.
+ */
+function withSegmentExtension(url) {
+  const ext = url.slice(url.lastIndexOf('.') + 1).toLowerCase();
+  return FFMPEG_SEGMENT_EXTENSIONS.has(ext) ? url : `${url}#.ts`;
+}
+
+/** True when the document lists variant or nested playlists rather than media segments. */
+function isMasterPlaylist(text) {
+  if (text.includes('#EXT-X-STREAM-INF')) return true;
+  return !text.includes('#EXTINF') && /^[^#\s].*$/m.test(text) && /\.m3u8/i.test(text);
+}
+
+/** True when a URL line points at another playlist (by path extension) instead of a segment. */
+function isPlaylistUrl(url) {
+  try {
+    return /\.m3u8$/i.test(new URL(url).pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
 /**
  * Rewrites a live manifest for the player: injects the live-edge start offset,
  * absolutizes chunk URLs against the manifest they came from, and routes nested
  * playlists back through this proxy.
  */
-function rewriteManifest(out, manifestUrl, referer, origin, descriptor, png = false) {
+function rewriteManifest(out, manifestUrl, referer, origin, descriptor, relaySegments = false) {
   const { targetDuration, totalDuration } = parsePlaylist(out);
   const ttlMs = targetDuration ? (targetDuration * 1000) / 2 : MANIFEST_TTL_MS;
 
   const isLive = !out.includes('#EXT-X-ENDLIST');
-  const isMaster = out.includes('#EXT-X-STREAM-INF');
+  const isMaster = isMasterPlaylist(out);
   const startOffset = isLive && !out.includes('#EXT-X-START') ? startOffsetSeconds(targetDuration, totalDuration) : 0;
   let injectedStart = startOffset === 0;
 
@@ -197,9 +229,9 @@ function rewriteManifest(out, manifestUrl, referer, origin, descriptor, png = fa
       absoluteUrl = l;
     }
 
-    if (isMaster) {
+    if (isMaster || isPlaylistUrl(absoluteUrl)) {
       let child = `/api/manifest?url=${encodeURIComponent(absoluteUrl)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}`;
-      if (png) child += '&png=1';
+      if (relaySegments) child += '&seg=1';
       if (descriptor) {
         // `rel` lets a child playlist be rebuilt against a re-minted parent.
         child += `&renew=${encodeURIComponent(descriptor.source)}`
@@ -210,32 +242,45 @@ function rewriteManifest(out, manifestUrl, referer, origin, descriptor, png = fa
       return child;
     }
 
-    if (png) {
-      return `/api/segment?url=${encodeURIComponent(absoluteUrl)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}`;
+    if (relaySegments) {
+      return segmentProxyUrl(absoluteUrl, referer, origin);
     }
 
-    if ((absoluteUrl.includes('.image') || absoluteUrl.includes('.js')) && !absoluteUrl.includes('.ts') && !absoluteUrl.includes('.m3u8')) {
-      absoluteUrl += '#.ts';
-    }
-    return absoluteUrl;
+    return withSegmentExtension(absoluteUrl);
   });
 
   return { body: rewritten.join('\n'), ttlMs };
+}
+
+/** Dot-free `/api/segment/<token>.ts` path: ffmpeg's HLS demuxer takes the extension from the last dot of the whole URL, so a query string breaks it. */
+function segmentProxyUrl(url, referer, origin) {
+  const token = Buffer.from(JSON.stringify({ url, referer, origin })).toString('base64url');
+  return `/api/segment/${token}.ts`;
+}
+
+function decodeSegmentToken(token) {
+  try {
+    const { url, referer = '', origin = '' } = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
+    return typeof url === 'string' ? { url, referer, origin } : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 const SEGMENT_TIMEOUT_MS = 15000;
 const SEGMENT_MAX_BYTES = 16 * 1024 * 1024;
 
 /**
- * Fetches one PNG-wrapped segment and returns the MPEG-TS inside. The URL is
- * checked by the same SSRF guard as manifests and redirects are not followed.
+ * Fetches one segment with the browser-fingerprinted client and returns the
+ * MPEG-TS inside (PNG or image wrappers are decoded). The URL and every
+ * redirect hop go through the same SSRF guard as manifests.
  */
 async function fetchDecodedSegment(targetUrl, referer, origin) {
-  await guardedUrl(targetUrl);
-  const res = await fetch(targetUrl, {
+  const res = await impitClient.safeFetch(targetUrl, {
     headers: { Referer: referer, Origin: origin, 'User-Agent': impitClient.BROWSER_UA },
-    redirect: 'error',
-    signal: AbortSignal.timeout(SEGMENT_TIMEOUT_MS),
+    timeoutMs: SEGMENT_TIMEOUT_MS,
+    attempts: 1,
+    validateUrl: guardedUrl,
   });
   if (!res.ok) {
     const err = new Error(`HTTP ${res.status}`);
@@ -249,10 +294,10 @@ async function fetchDecodedSegment(targetUrl, referer, origin) {
 
 /** Mounts GET /api/manifest and GET /api/segment on the given Express app. */
 function mount(app) {
-  app.get('/api/segment', async (req, res) => {
-    const targetUrl = req.query.url;
-    const referer = req.query.referer || '';
-    const origin = req.query.origin || '';
+  app.get('/api/segment/:token', async (req, res) => {
+    const seg = decodeSegmentToken(req.params.token.replace(/\.ts$/, ''));
+    if (!seg) return res.status(400).send('Invalid segment token');
+    const { url: targetUrl, referer, origin } = seg;
     if (!parseSafeTargetUrl(targetUrl)) return res.status(400).send('Invalid url');
     try {
       const ts = await fetchDecodedSegment(targetUrl, referer, origin);
@@ -274,7 +319,7 @@ function mount(app) {
     const origin = req.query.origin || 'https://embed.st';
     const renewSource = req.query.renew;
     const renewEmbed = req.query.embed;
-    const png = req.query.png === '1';
+    const relaySegments = req.query.seg === '1';
     const renewRel = typeof req.query.rel === 'string' ? req.query.rel : null;
 
     if (!targetUrl) return res.status(400).send('Missing url');
@@ -291,7 +336,7 @@ function mount(app) {
     const renewBase = renewable && typeof req.query.base === 'string' ? req.query.base : targetUrl;
     const descriptor = renewable ? { source: renewSource, embed: renewEmbed, base: renewBase } : null;
 
-    const cacheKey = `${targetUrl}|${referer}|${origin}|${png ? 'png' : ''}`;
+    const cacheKey = `${targetUrl}|${referer}|${origin}|${relaySegments ? 'seg' : ''}`;
     const entry = manifestCacheGet(cacheKey);
     if (entry && entry.negative) {
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -337,7 +382,7 @@ function mount(app) {
             out = await fetchUpstreamManifest(manifestUrl, manifestReferer, origin);
           }
 
-          const { body, ttlMs } = rewriteManifest(out, manifestUrl, manifestReferer, origin, descriptor, png);
+          const { body, ttlMs } = rewriteManifest(out, manifestUrl, manifestReferer, origin, descriptor, relaySegments);
           manifestCacheSet(cacheKey, body, ttlMs);
           return body;
         })().finally(() => {

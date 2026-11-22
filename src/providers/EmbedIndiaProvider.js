@@ -23,7 +23,7 @@
 const BaseProvider = require('./BaseProvider');
 const StreamEntity = require('../domain/StreamEntity');
 const path = require('path');
-const { runProviderScript } = require('./runner');
+const runner = require('./runner');
 const { manifestProxyUrl } = require('../proxyUrl');
 
 // 🔒
@@ -43,11 +43,14 @@ const CF_PROTECTED_DOMAINS = new Set([
  */
 const EMBED_PATH_RE = /^https?:\/\/[^/]+\/embed(?:-noads)?\/(?:admin\/)?([^?#]+)/;
 
+const GASM_RETRY_DELAY_MS = 400;
+
 class EmbedIndiaProvider extends BaseProvider {
   constructor(opts) {
     super(opts);
     this.name = 'EmbedIndia';
     this._failureCache = new Map();
+    this._inFlight = new Map();
     this.FAILURE_TTL_MS = 5 * 60 * 1000; // 5 minutes
   }
 
@@ -73,20 +76,39 @@ class EmbedIndiaProvider extends BaseProvider {
     } catch (_) {}
   }
 
+  /** True when the url is an embedindia-family embed page that extractM3u8 can resolve. */
+  isEmbedUrl(url) {
+    return typeof url === 'string' && EMBED_PATH_RE.test(url);
+  }
+
   /**
    * Extracts a signed m3u8 from an embedindia page.
-   * Shared by resolveStream and the manifest proxy's token renewal.
+   * Shared by resolveStream and the manifest proxy's token renewal. Concurrent
+   * calls for one embed share a single runner; a failed run is retried once.
    */
-  async extractM3u8(embedUrl, referer) {
-    const match = embedUrl.match(EMBED_PATH_RE);
-    if (!match) return null;
-    const channelId = match[1];
+  extractM3u8(embedUrl, referer) {
+    const pending = this._inFlight.get(embedUrl);
+    if (pending) return pending;
+    const task = this._extractWithRetry(embedUrl, referer).finally(() => this._inFlight.delete(embedUrl));
+    this._inFlight.set(embedUrl, task);
+    return task;
+  }
 
+  async _extractWithRetry(embedUrl, referer) {
+    if (!this.isEmbedUrl(embedUrl)) return null;
+    const first = await this._runGasmRunner(embedUrl, referer);
+    if (first) return first;
+    await new Promise((resolve) => setTimeout(resolve, GASM_RETRY_DELAY_MS));
+    return this._runGasmRunner(embedUrl, referer);
+  }
+
+  async _runGasmRunner(embedUrl, referer) {
+    const channelId = embedUrl.match(EMBED_PATH_RE)[1];
     const origin = new URL(embedUrl).origin;
     const effectiveReferer = referer || `${origin}/`;
     const scriptPath = path.join(__dirname, 'run_gasm_india.js');
 
-    const stdout = await runProviderScript(scriptPath, [channelId, 'EMPTY', 'EMPTY', embedUrl]);
+    const stdout = await runner.runProviderScript(scriptPath, [channelId, 'EMPTY', 'EMPTY', embedUrl]);
     const m = stdout.match(/"file":\s*"(https?:\/\/[^"]+\.m3u8.*?)"/);
     if (!m) return null;
 

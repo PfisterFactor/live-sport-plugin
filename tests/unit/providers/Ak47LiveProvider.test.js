@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { describe, it, expect, beforeEach, afterEach, setSystemTime } = require('bun:test');
 const Ak47LiveProvider = require('../../../src/providers/Ak47LiveProvider');
 const { makeCradle, res } = require('./fixtures/helpers');
+const EmbedIndiaProvider = require('../../../src/providers/EmbedIndiaProvider');
 
 const KEY = Buffer.from('az1sUE8zNnNUVXpN', 'ascii');
 const IV = Buffer.from('dz00QVhsNmZZU0Fw', 'ascii');
@@ -46,8 +47,8 @@ http://cdn.example/x.mpd
 http://cdn.example/arsenal.m3u8
 `;
 
-function makeProvider(routes) {
-  const p = new Ak47LiveProvider(makeCradle());
+function makeProvider(routes, embedIndiaProvider) {
+  const p = new Ak47LiveProvider(makeCradle({ embedIndiaProvider }));
   p.proxyFetch = async (url) => {
     for (const [needle, body] of Object.entries(routes)) {
       if (url.includes(needle)) return res({ body });
@@ -130,5 +131,47 @@ describe('Ak47LiveProvider resolveStream', () => {
     expect(new URL(s.url).searchParams.get('referer')).toBe('https://ref.example/');
     expect(await p.resolveStream('http://c.example/a.mpd', 'x', 'T', {})).toEqual([]);
     expect(await p.resolveStream('https://embed.st/a.m3u8', 'x', 'T', {})).toEqual([]);
+  });
+
+  it('resolves embedindia-family embed tokens through EmbedIndia with renewal', async () => {
+    const embedUrl = 'https://taifood-blog.asia/embed/nfl/2026-11-22/no-chi';
+    const embedIndia = new EmbedIndiaProvider(makeCradle());
+    const calls = [];
+    embedIndia.extractM3u8 = async (url) => {
+      calls.push(url);
+      return { m3u8: 'https://cdn.example/live/index.m3u8?token=abc', referer: 'https://taifood-blog.asia/' };
+    };
+    const p = makeProvider({
+      'pro/nfl.txt': encrypt([{ name: 'XTREME+ FHD', link: '', tokenApi: JSON.stringify({ type: 'embed', api: embedUrl, url: '' }) }]),
+    }, embedIndia);
+    const [s] = await p.resolveStream('pro/nfl.txt#0', 'american_football', 'Vikings vs Lions', { linksPath: 'pro/nfl.txt', streamIndex: 0 });
+    const u = new URL(s.url);
+    expect(u.pathname).toBe('/api/manifest');
+    expect(u.searchParams.get('url')).toBe('https://cdn.example/live/index.m3u8?token=abc');
+    expect(u.searchParams.get('referer')).toBe('https://taifood-blog.asia/');
+    expect(u.searchParams.get('renew')).toBe('embedindia');
+    expect(u.searchParams.get('embed')).toBe(embedUrl);
+    expect(s.title).toBe('Vikings vs Lions (XTREME+ FHD)');
+    expect(calls).toEqual([embedUrl]);
+  });
+
+  it('allows embedindia.st embed tokens on the EmbedIndia route only', async () => {
+    const embedIndia = new EmbedIndiaProvider(makeCradle());
+    embedIndia.extractM3u8 = async () => ({ m3u8: 'https://cdn.example/a.m3u8', referer: 'https://embedindia.st/' });
+    const routes = {
+      'pro/x.txt': encrypt([{ name: 'CH 1', tokenApi: { type: 'embed', api: 'https://embedindia.st/embed/admin/ch5' } }]),
+    };
+    const [s] = await makeProvider(routes, embedIndia).resolveStream('pro/x.txt#0', 'x', 'T', { linksPath: 'pro/x.txt', streamIndex: 0 });
+    expect(new URL(s.url).searchParams.get('embed')).toBe('https://embedindia.st/embed/admin/ch5');
+    expect(await makeProvider(routes).resolveStream('pro/x.txt#0', 'x', 'T', { linksPath: 'pro/x.txt', streamIndex: 0 })).toEqual([]);
+  });
+
+  it('drops embed tokens whose EmbedIndia extraction yields nothing', async () => {
+    const embedIndia = new EmbedIndiaProvider(makeCradle());
+    embedIndia.extractM3u8 = async () => null;
+    const p = makeProvider({
+      'pro/x.txt': encrypt([{ name: 'CH 1', tokenApi: { type: 'embed', api: 'https://taifood-blog.asia/embed/nfl/a-b' } }]),
+    }, embedIndia);
+    expect(await p.resolveStream('pro/x.txt#0', 'x', 'T', { linksPath: 'pro/x.txt', streamIndex: 0 })).toEqual([]);
   });
 });

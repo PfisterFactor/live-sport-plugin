@@ -73,13 +73,15 @@ function applyHeaderPairs(suffix, headers) {
  * obfuscated: base64 -> swap adjacent byte pairs -> reverse -> base64 ->
  * AES-128-CBC -> JSON. Two public M3U feeds (fawasp / axsp) add extra direct
  * channels with #EXTVLCOPT headers. DASH/ClearKey and embed.st/WASM links are
- * dropped; only plain HLS survives.
+ * dropped; plain HLS survives, and embedindia-family embed tokens resolve
+ * through EmbedIndiaProvider.
  */
 class Ak47LiveProvider extends BaseProvider {
   constructor(opts = {}) {
     super(opts);
     this.name = 'Ak47Live';
     this.sourceName = 'ak47live';
+    this.embedIndiaProvider = opts.embedIndiaProvider;
     this._cache = null;
     this._lastFetchTime = 0;
     this._cacheTtlMs = 180000;
@@ -357,6 +359,30 @@ class Ak47LiveProvider extends BaseProvider {
     }
   }
 
+  /** Embed page URL of an embedindia-family tokenApi entry ({type:'embed', url}), or ''. */
+  _embedIndiaUrl(selected) {
+    if (!this.embedIndiaProvider) return '';
+    let tokenObj;
+    try {
+      tokenObj = typeof selected.tokenApi === 'string' ? JSON.parse(selected.tokenApi) : selected.tokenApi;
+    } catch (_) { return ''; }
+    const url = tokenObj && tokenObj.type === 'embed' ? tokenObj.api : '';
+    return this.embedIndiaProvider.isEmbedUrl(url) ? url : '';
+  }
+
+  /** Signed m3u8 from an embedindia-family embed page, proxied with renewal through that embed. */
+  async _resolveEmbedIndia(embedUrl, matchTitle, channelLabel) {
+    const extracted = await this.embedIndiaProvider.extractM3u8(embedUrl);
+    if (!extracted) return [];
+    return [new StreamEntity({
+      name: this.name,
+      title: `${matchTitle || 'Live Event'} (${channelLabel})`,
+      url: manifestProxyUrl({ url: extracted.m3u8, referer: extracted.referer, renew: 'embedindia', embed: embedUrl }),
+      behaviorHints: { notWebReady: true },
+      resolution: 'HD',
+    })];
+  }
+
   /** Resolve one source (an encrypted pro/*.txt channel or a direct playlist URL) into a proxied HLS stream. */
   async resolveStream(sourceId, matchCategory, matchTitle, src = {}) {
     let streamUrl = src.id || sourceId;
@@ -380,6 +406,8 @@ class Ak47LiveProvider extends BaseProvider {
           if (selected) {
             channelLabel = selected.name ? selected.name.trim() : channelLabel;
             if (selected.drm_scheme || selected.key || selected.kid) return [];
+            const embedUrl = selected.link ? '' : this._embedIndiaUrl(selected);
+            if (embedUrl) return await this._resolveEmbedIndia(embedUrl, matchTitle, channelLabel);
 
             const tokenApiStr = typeof selected.tokenApi === 'string' ? selected.tokenApi : JSON.stringify(selected.tokenApi || '');
             if (BLOCKED_HOST_RE.test(selected.link || '') || BLOCKED_HOST_RE.test(tokenApiStr)) return [];
@@ -408,7 +436,7 @@ class Ak47LiveProvider extends BaseProvider {
     return [new StreamEntity({
       name: this.name,
       title: `${matchTitle || 'Live Event'} (${channelLabel})`,
-      url: manifestProxyUrl({ url: streamUrl, referer: headers.referer, origin: headers.origin }),
+      url: manifestProxyUrl({ url: streamUrl, referer: headers.referer, origin: headers.origin, proxySegments: true }),
       behaviorHints: { notWebReady: true },
       resolution: 'HD',
     })];

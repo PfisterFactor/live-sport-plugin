@@ -239,13 +239,13 @@ class TimStreamsProvider extends BaseProvider {
     const format = await this.segmentFormat(extracted.m3u8, extracted.referer);
     if (!format) return [webPlayer()];
 
-    let url = manifestProxyUrl({
+    const url = manifestProxyUrl({
       url: extracted.m3u8,
       referer: extracted.referer,
       renew: this.sourceName,
       embed: embedUrl,
+      proxySegments: format === 'png',
     });
-    if (format === 'png') url += '&png=1';
 
     return [new StreamEntity({
       name: this.name,

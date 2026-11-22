@@ -245,7 +245,7 @@ describe('TimStreamsProvider.resolveStream', () => {
     expect(streams).toHaveLength(1);
     const url = new URL(streams[0].url);
     expect(url.pathname).toBe('/api/manifest');
-    expect(url.searchParams.get('png')).toBe('1');
+    expect(url.searchParams.get('seg')).toBe('1');
     expect(url.searchParams.get('renew')).toBe('timstreams');
   });
 
@@ -254,7 +254,7 @@ describe('TimStreamsProvider.resolveStream', () => {
     provider.extractM3u8 = mock(async () => ({ m3u8: M3U8, referer: 'https://shoewiki.click/' }));
     provider.segmentFormat = mock(async () => 'ts');
     const [row] = await provider.resolveStream(src.id, 'football', 'Match', src);
-    expect(new URL(row.url).searchParams.get('png')).toBeNull();
+    expect(new URL(row.url).searchParams.get('seg')).toBeNull();
   });
 
   test('falls back to the embed web player when no segment is readable', async () => {

@@ -1,5 +1,8 @@
 const { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn } = require('bun:test');
 
+/** Encodes a string as the ArrayBuffer an impit response body yields. */
+const bytesOf = (s) => new TextEncoder().encode(s).buffer;
+
 const impitClient = require('../../../src/impitClient');
 
 const PLAYLIST = '#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:5.0,\nseg0.ts\n';
@@ -29,6 +32,7 @@ beforeAll(() => {
         case '/post-kept': return new Response('', { status: 307, headers: { Location: `${base}/echo` } });
         case '/echo': return new Response(JSON.stringify({ method: req.method, body }), { status: 200 });
         case '/to-metadata': return new Response('', { status: 302, headers: { Location: 'http://169.254.169.254/latest/meta-data/' } });
+        case '/to-other-origin': return new Response('', { status: 302, headers: { Location: `http://localhost:${server.port}/ok` } });
         default: return new Response('nope', { status: 404 });
       }
     },
@@ -64,6 +68,17 @@ describe('safeFetch undici path follows redirects', () => {
     expect(await res.text()).toBe(PLAYLIST);
     expect(hits['/moved']).toBe(1);
     expect(hits['/ok']).toBe(1);
+  });
+
+  it('keeps the Referer on a same-origin hop and drops it on a cross-origin hop', async () => {
+    const headers = { Referer: 'https://provider.example/', 'User-Agent': 'UA-1' };
+    await impitClient.safeFetch(`${base}/moved`, { attempts: 1, headers });
+    expect(lastRequest.headers.referer).toBe('https://provider.example/');
+
+    await impitClient.safeFetch(`${base}/to-other-origin`, { attempts: 1, headers });
+    expect(hits['/ok']).toBe(2);
+    expect(lastRequest.headers.referer).toBeUndefined();
+    expect(lastRequest.headers['user-agent']).toBe('UA-1');
   });
 
   it('resolves a relative Location against the hop it came from', async () => {
@@ -116,7 +131,7 @@ describe('safeFetch validateUrl hook', () => {
   it('vets every redirect hop on the impit path without falling back', async () => {
     impitSpy = spyOn(impitClient.getImpit(), 'fetch').mockImplementation(async (url, init) => {
       expect(init.redirect).toBe('manual');
-      return { status: 302, headers: new Headers({ location: 'http://169.254.169.254/' }), text: async () => '' };
+      return { status: 302, headers: new Headers({ location: 'http://169.254.169.254/' }), arrayBuffer: async () => bytesOf('') };
     });
     await expect(impitClient.safeFetch(`${base}/x`, { attempts: 3, validateUrl: refuse169 }))
       .rejects.toMatchObject({ blocked: true });
@@ -126,7 +141,7 @@ describe('safeFetch validateUrl hook', () => {
   it('does not force manual redirects when no validator is given', async () => {
     impitSpy = spyOn(impitClient.getImpit(), 'fetch').mockImplementation(async (url, init) => {
       expect(init.redirect).toBeUndefined();
-      return { status: 200, headers: new Headers(), text: async () => PLAYLIST };
+      return { status: 200, headers: new Headers(), arrayBuffer: async () => bytesOf(PLAYLIST) };
     });
     const res = await impitClient.safeFetch(`${base}/x`, { attempts: 1 });
     expect(res.ok).toBe(true);
@@ -136,7 +151,7 @@ describe('safeFetch validateUrl hook', () => {
 describe('safeFetch impit 403 falls back to undici once', () => {
   const impit403 = () => {
     impitSpy = spyOn(impitClient.getImpit(), 'fetch').mockImplementation(async () => (
-      { status: 403, headers: new Headers(), text: async () => FORBIDDEN }
+      { status: 403, headers: new Headers(), arrayBuffer: async () => bytesOf(FORBIDDEN) }
     ));
   };
 
@@ -157,7 +172,7 @@ describe('safeFetch impit 403 falls back to undici once', () => {
 
   it('returns other non-2xx statuses from impit as-is', async () => {
     impitSpy = spyOn(impitClient.getImpit(), 'fetch').mockImplementation(async () => (
-      { status: 404, headers: new Headers(), text: async () => 'nope' }
+      { status: 404, headers: new Headers(), arrayBuffer: async () => bytesOf('nope') }
     ));
     const res = await impitClient.safeFetch(`${base}/ok`, { attempts: 1 });
     expect(res.status).toBe(404);

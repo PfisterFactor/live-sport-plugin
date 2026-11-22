@@ -2,8 +2,9 @@
  * PngSegmentDecoder.js — unpacks HLS segments that a CDN hides inside PNG images.
  *
  * The image's pixel bytes carry the media: an optional `kwLn` chunk gives the
- * payload length, and the payload is either `KWP1` + u32 length + MPEG-TS or
- * bare MPEG-TS (0x47 sync bytes). Filtering is undone per the PNG spec.
+ * payload length, and the payload is `KWP1` + u32 length + MPEG-TS, `TIKTIKPX`
+ * + u32 length + gzip(MPEG-TS), or bare MPEG-TS (0x47 sync bytes). Filtering is
+ * undone per the PNG spec. Non-PNG input is trimmed to its first TS sync run.
  */
 
 const zlib = require('node:zlib');
@@ -52,16 +53,27 @@ function unfilter(raw, width, height, bpp) {
   return out;
 }
 
+/** Returns `buf` from its first three-packet 0x47 sync run, or unchanged when already TS-aligned or none exists. */
+function trimToTsSync(buf) {
+  if (buf[0] === 0x47) return buf;
+  const last = buf.length - 2 * TS_PACKET;
+  for (let i = 0; i < last; i++) {
+    if (buf[i] === 0x47 && buf[i + TS_PACKET] === 0x47 && buf[i + 2 * TS_PACKET] === 0x47) return buf.subarray(i);
+  }
+  return buf;
+}
+
 /**
- * Decodes a pixel-packed PNG segment into MPEG-TS bytes. Non-PNG input is
- * returned unchanged.
+ * Decodes a pixel-packed PNG segment into MPEG-TS bytes. Non-PNG input that
+ * does not already start with TS sync bytes is trimmed to the first run of
+ * three sync bytes at 188-byte stride, which removes RIFF/WebP-style wrappers.
  *
  * @param {Buffer|Uint8Array} input
  * @returns {Buffer}
  */
 function decodePngSegment(input) {
   const buf = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
-  if (!isPng(buf)) return buf;
+  if (!isPng(buf)) return trimToTsSync(buf);
 
   let pos = 8;
   let width = 0, height = 0, bitDepth = 0, colorType = 0, interlace = 0, payloadLen = -1;
@@ -107,12 +119,19 @@ function decodePngSegment(input) {
     if (8 + dataLen > pixels.length) throw new Error('KWP1 length exceeds decoded bytes');
     return pixels.subarray(8, 8 + dataLen);
   }
+  if (pixels.length >= 12 && pixels.toString('latin1', 0, 8) === 'TIKTIKPX') {
+    const gzLen = pixels.readUInt32BE(8);
+    if (12 + gzLen > pixels.length) throw new Error('TIKTIKPX length exceeds decoded bytes');
+    const gz = pixels.subarray(12, 12 + gzLen);
+    if (gz[0] !== 0x1f || gz[1] !== 0x8b) throw new Error('TIKTIKPX payload is not gzip');
+    return zlib.gunzipSync(gz);
+  }
   if (pixels.length >= TS_PACKET && pixels[0] === 0x47) {
     let end = Math.floor(pixels.length / TS_PACKET) * TS_PACKET;
     while (end >= 2 * TS_PACKET && (pixels[end - TS_PACKET] !== 0x47 || pixels[end - 2 * TS_PACKET] !== 0x47)) end -= TS_PACKET;
     return end > 0 ? pixels.subarray(0, end) : pixels;
   }
-  throw new Error('Decoded pixels do not start with KWP1 or an MPEG-TS sync byte');
+  throw new Error('Decoded pixels do not start with KWP1, TIKTIKPX, or an MPEG-TS sync byte');
 }
 
 module.exports = { decodePngSegment, isPng };

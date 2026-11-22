@@ -109,6 +109,44 @@ function resolveSyncTimeoutMs() {
  * so streams are handed to the player through the manifest proxy with a
  * renewal descriptor (see services/StreamRenewal.js).
  */
+/**
+ * Resolves with the lowest-index non-null result of `tasks`. Once one task
+ * succeeds, lower-index tasks still pending get `windowMs` to beat it; after
+ * `budgetMs` the best result so far (or null) is returned. Tasks must not reject.
+ */
+function firstPreferred(tasks, windowMs, budgetMs) {
+  return new Promise((resolve) => {
+    const results = new Array(tasks.length).fill(undefined);
+    let remaining = tasks.length;
+    let windowTimer = null;
+    let done = false;
+    const budgetTimer = setTimeout(() => finish(), budgetMs);
+    function finish() {
+      if (done) return;
+      done = true;
+      clearTimeout(windowTimer);
+      clearTimeout(budgetTimer);
+      resolve(results.find((r) => r) || null);
+    }
+    function check() {
+      const best = results.findIndex((r) => r);
+      if (best < 0) {
+        if (remaining === 0) finish();
+      } else if (results.slice(0, best).every((r) => r !== undefined)) {
+        finish();
+      } else if (!windowTimer) {
+        windowTimer = setTimeout(finish, windowMs);
+      }
+    }
+    if (tasks.length === 0) finish();
+    tasks.forEach((task, i) => task.then((r) => r || null, () => null).then((r) => {
+      results[i] = r;
+      remaining -= 1;
+      check();
+    }));
+  });
+}
+
 class DliveProvider extends BaseProvider {
   constructor(opts) {
     super(opts);
@@ -117,6 +155,7 @@ class DliveProvider extends BaseProvider {
     this.baseUrl = DliveProvider.BASE_URL;
     this.baseDomains = [DliveProvider.BASE_URL];
     this.folders = ['player', 'cast', 'plus', 'casting'];
+    this._badHosts = new Map();
     this.domainRegistry = (opts && opts.iframeDomainRegistry) || new IframeDomainRegistry();
 
     /**
@@ -418,9 +457,33 @@ class DliveProvider extends BaseProvider {
     return JSON.parse(Buffer.from(parts.join(''), 'base64').toString('utf8'));
   }
 
-  /** Fetch text for an embed-chain page; null on any failure. */
+  /** True while `host` is remembered as unresolvable or timing out. */
+  _hostIsBad(host) {
+    const until = this._badHosts.get(host);
+    if (!until) return false;
+    if (until > Date.now()) return true;
+    this._badHosts.delete(host);
+    return false;
+  }
+
+  /** Remembers a host that failed DNS or timed out, so later requests skip it. */
+  _markHostBad(url, err) {
+    if (!DliveProvider.NETWORK_FAILURE_RE.test(String((err && err.message) || err))) return;
+    try {
+      this._badHosts.set(new URL(url).hostname, Date.now() + DliveProvider.BAD_HOST_TTL_MS);
+    } catch (_) { /* unparsable URL: nothing to remember */ }
+  }
+
+  /**
+   * Fetch text for an embed-chain page; null on any failure. A host that
+   * timed out or failed DNS is skipped for BAD_HOST_TTL_MS, and its timeout
+   * does not retry through undici.
+   */
   async _fetchPage(url, referer, timeoutMs = 6000) {
     if (!/^https?:/i.test(url || '')) return null;
+    let host;
+    try { host = new URL(url).hostname; } catch (_) { return null; }
+    if (this._hostIsBad(host)) return null;
     try {
       const res = await this.proxyFetch(url, {
         headers: {
@@ -429,9 +492,11 @@ class DliveProvider extends BaseProvider {
           'Accept': 'text/html,application/xhtml+xml,application/json,*/*;q=0.8',
         },
         timeoutMs,
+        noFallbackOnNetworkError: true,
       });
       return res.ok ? await res.text() : null;
-    } catch (_) {
+    } catch (err) {
+      this._markHostBad(url, err);
       return null;
     }
   }
@@ -513,8 +578,9 @@ class DliveProvider extends BaseProvider {
    * recovered from loadPlayerChannel(N) first.
    */
   async _jsonPlayerHop(html, pageUrl, depth) {
-    const endpoint = html.match(/([^"']*player\.php)/i);
-    const concrete = html.match(/([^"'\s]*player\.php\?[^"'\s]*[?&]id=\d+[^"'\s]*)/i);
+    if (!/player\.php/i.test(html)) return null;
+    const endpoint = html.match(/(?:^|["'=(\s])([^"'\s=()]*player\.php)/i);
+    const concrete = html.match(/(?:^|["'=(\s])([^"'\s=()]*player\.php\?(?:[^"'\s]*&)?id=\d+[^"'\s]*)/i);
     let channelId = (html.match(/loadPlayerChannel\(\s*(\d+)\s*\)/) || [])[1]
       || (html.match(/data-channel-id=["']?(\d+)/i) || [])[1];
     if (!channelId) {
@@ -669,33 +735,34 @@ class DliveProvider extends BaseProvider {
   }
 
   /**
-   * Probe mirror folders for one channel and stop at the first manifest that
-   * plays: the folders are alternatives for the same channel, not a matrix to
-   * exhaust. A folder whose embed was already tried (several folders share
-   * one player host) is skipped. Domains and folders are ordered by observed
-   * reliability.
+   * Probe every mirror folder of one channel concurrently and take the first
+   * manifest that plays. The folders are alternatives for the same channel;
+   * when several succeed within PREFERENCE_WINDOW_MS of the first, the folder
+   * earliest in `this.folders` wins. A folder whose embed host was already
+   * claimed by another folder is skipped. Slower candidates are abandoned.
    */
   async _resolveChannel(channelId) {
-    const deadline = Date.now() + DliveProvider.CHANNEL_BUDGET_MS;
     const tried = new Set();
+    const candidates = [];
     for (const base of this.baseDomains) {
       for (const folder of this.folders) {
-        const remaining = deadline - Date.now();
-        if (remaining < 1000) return null;
-        try {
-          const embedUrl = await this._playerEmbedUrl(channelId, base, folder, Math.min(6000, remaining));
-          if (!embedUrl || tried.has(embedUrl)) continue;
-          tried.add(embedUrl);
-          const extracted = await this.extractM3u8(embedUrl);
-          if (extracted && await this._manifestPlays(extracted.m3u8, extracted.referer)) {
-            return { ...extracted, embedUrl };
+        candidates.push((async () => {
+          try {
+            const embedUrl = await this._playerEmbedUrl(channelId, base, folder, 6000);
+            if (!embedUrl || tried.has(embedUrl)) return null;
+            tried.add(embedUrl);
+            const extracted = await this.extractM3u8(embedUrl);
+            if (extracted && await this._manifestPlays(extracted.m3u8, extracted.referer)) {
+              return { ...extracted, embedUrl };
+            }
+          } catch (err) {
+            console.error(`[${this.name}] ${base}/${folder} failed for channel ${channelId}:`, err.message);
           }
-        } catch (err) {
-          console.error(`[${this.name}] ${base}/${folder} failed for channel ${channelId}:`, err.message);
-        }
+          return null;
+        })());
       }
     }
-    return null;
+    return firstPreferred(candidates, DliveProvider.PREFERENCE_WINDOW_MS, DliveProvider.CHANNEL_BUDGET_MS);
   }
 
   async resolveStream(sourceId, matchCategory, matchTitle, src = {}) {
@@ -714,6 +781,7 @@ class DliveProvider extends BaseProvider {
             referer: resolved.referer,
             renew: this.sourceName,
             embed: resolved.embedUrl,
+            proxySegments: true,
           }),
           behaviorHints: { notWebReady: true },
           resolution: 'HD',
@@ -741,7 +809,14 @@ DliveProvider.decodeHtmlEntities = decodeHtmlEntities;
 DliveProvider.MAX_EMBED_DEPTH = 2;
 
 /** Wall-clock cap for probing every mirror of one channel. */
-DliveProvider.CHANNEL_BUDGET_MS = 20000;
+DliveProvider.CHANNEL_BUDGET_MS = 6500;
+
+/** How long a lower-priority folder's success may wait for a preferred folder still probing. */
+DliveProvider.PREFERENCE_WINDOW_MS = 400;
+
+/** Hosts that timed out or failed DNS are skipped this long. */
+DliveProvider.BAD_HOST_TTL_MS = 5 * 60 * 1000;
+DliveProvider.NETWORK_FAILURE_RE = /timeout|timed out|dns error|ENOTFOUND|EAI_AGAIN/i;
 
 /** Pause before re-probing a manifest that 404s because its channel is still starting. */
 DliveProvider.WARMUP_MS = 3000;

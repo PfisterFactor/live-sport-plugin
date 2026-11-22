@@ -201,7 +201,7 @@ global.WebAssembly.instantiateStreaming = async (resp, importObject) => {
 
 const originalFetch = global.fetch;
 
-global.fetch = async (url, opts) => { console.log('FETCH CALLED WITH:', url);
+global.fetch = async (url, opts) => {
   const urlStr = typeof url === 'string' ? url : (url.url || url.href);
   
   if (urlStr.includes('gasm.wasm')) {
@@ -217,8 +217,6 @@ global.fetch = async (url, opts) => { console.log('FETCH CALLED WITH:', url);
     }
     
     const proxyUrl = targetOrigin + '/fetch';
-    
-    console.log('POST DATA:', Buffer.from(reqBody).toString('hex'));
     
     try {
       const fetchOpts = opts || (url.headers ? url : {});
@@ -238,7 +236,6 @@ global.fetch = async (url, opts) => { console.log('FETCH CALLED WITH:', url);
       reqHeaders.set('Referer', fullEmbedUrl);
       reqHeaders.set('Origin', targetOrigin);
       reqHeaders.set('Content-Type', 'application/octet-stream');
-      console.log('HEADERS:', Array.from(reqHeaders.entries()));
       
       const response = await gasmSafeFetch(proxyUrl, {
           method: fetchOpts.method || 'POST',

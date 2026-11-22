@@ -1,6 +1,7 @@
 const { describe, it, expect, beforeEach, afterEach, setSystemTime, spyOn } = require('bun:test');
 const EmbedIndiaProvider = require('../../../src/providers/EmbedIndiaProvider');
 const { makeCradle } = require('./fixtures/helpers');
+const runner = require('../../../src/providers/runner');
 
 const NOW = new Date('2026-03-01T12:00:00Z');
 
@@ -91,5 +92,48 @@ describe('EmbedIndiaProvider._tryWasmExtraction', () => {
 
   it('returns nothing for an empty getMatches contract', async () => {
     expect(await makeProvider().getMatches()).toEqual([]);
+  });
+});
+
+describe('EmbedIndiaProvider.extractM3u8', () => {
+  const embedUrl = 'https://taifood-blog.asia/embed/nfl/2026-11-22/no-chi';
+  const RUNNER_OUTPUT = 'noise "file": "https://cdn.example/x.m3u8?t=1" more';
+  const EXPECTED = { m3u8: 'https://cdn.example/x.m3u8?t=1', referer: 'https://taifood-blog.asia/' };
+
+  it('retries once after a failed runner and returns the second run', async () => {
+    const spy = spyOn(runner, 'runProviderScript')
+      .mockResolvedValueOnce('[WASM] Proxy fetch failed: 500')
+      .mockResolvedValueOnce(RUNNER_OUTPUT);
+    expect(await new EmbedIndiaProvider(makeCradle()).extractM3u8(embedUrl)).toEqual(EXPECTED);
+    expect(spy).toHaveBeenCalledTimes(2);
+    spy.mockRestore();
+  });
+
+  it('returns null after both runner attempts produce no m3u8', async () => {
+    const spy = spyOn(runner, 'runProviderScript').mockResolvedValue('');
+    expect(await new EmbedIndiaProvider(makeCradle()).extractM3u8(embedUrl)).toBeNull();
+    expect(spy).toHaveBeenCalledTimes(2);
+    spy.mockRestore();
+  });
+
+  it('shares one in-flight runner across concurrent calls for the same embed', async () => {
+    let release;
+    const spy = spyOn(runner, 'runProviderScript')
+      .mockImplementation(() => new Promise((resolve) => { release = () => resolve(RUNNER_OUTPUT); }));
+    const p = new EmbedIndiaProvider(makeCradle());
+    const first = p.extractM3u8(embedUrl);
+    const second = p.extractM3u8(embedUrl);
+    release();
+    expect(await first).toEqual(EXPECTED);
+    expect(await second).toEqual(EXPECTED);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
+  it('ignores urls that are not embed pages', async () => {
+    const spy = spyOn(runner, 'runProviderScript');
+    expect(await new EmbedIndiaProvider(makeCradle()).extractM3u8('https://other.tv/live/1')).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

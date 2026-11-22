@@ -233,6 +233,19 @@ describe('DliveProvider embed resolution', () => {
     expect(p.domainRegistry.strategyFor('vertex.st')).toBe('json-hop');
   });
 
+  it('finds the player endpoint in a large quote-free page without stalling the event loop', async () => {
+    const calls = pageMap({
+      'https://vertex.st/api/player.php?id=7': JSON.stringify({ url: 'https://play.matchli.st/embed/7' }),
+      'https://play.matchli.st/embed/7': 'window.PP={"file":"https:\\/\\/hls.hockey.do\\/live.m3u8?e=1"}',
+    });
+    const html = `${'x'.repeat(300000)} api/player.php?id=7`;
+    const started = Date.now();
+    const r = await p._resolveFromHtml(html, 'https://vertex.st/player.html');
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(calls[0]).toBe('https://vertex.st/api/player.php?id=7');
+    expect(r.url).toBe('https://hls.hockey.do/live.m3u8?e=1');
+  });
+
   it('follows nested iframes, trying registry-known hosts before unknown ones', async () => {
     const calls = pageMap({
       'https://unknown.example/frame': '<html>nothing</html>',
@@ -285,7 +298,7 @@ describe('DliveProvider channel probing', () => {
     expect(DliveProvider.BASE_URL).toBe('https://thedaddy.li');
   });
 
-  it('stops at the first folder that yields a playing manifest', async () => {
+  it('probes every folder concurrently and returns the one that yields a playing manifest', async () => {
     const probed = [];
     p._playerEmbedUrl = async (id, base, folder) => { probed.push(`${base}/${folder}`); return folder === 'player' ? 'https://emb.example/e/1' : null; };
     p.extractM3u8 = async () => ({ m3u8: 'https://cdn.example/a.m3u8', referer: 'https://emb.example/' });
@@ -293,7 +306,7 @@ describe('DliveProvider channel probing', () => {
 
     const r = await p._resolveChannel('91');
     expect(r).toEqual({ m3u8: 'https://cdn.example/a.m3u8', referer: 'https://emb.example/', embedUrl: 'https://emb.example/e/1' });
-    expect(probed).toEqual(['https://thedaddy.li/player']);
+    expect(probed.sort()).toEqual(['cast', 'casting', 'player', 'plus'].map((f) => `https://thedaddy.li/${f}`));
   });
 
   it('moves on to the next folder when an embed has no manifest', async () => {
@@ -311,6 +324,61 @@ describe('DliveProvider channel probing', () => {
 
     expect((await p._resolveChannel('91')).embedUrl).toBe('https://ok.example/e/1');
     expect(extracted).toEqual(['https://dead.example/e/1', 'https://ok.example/e/1']);
+  });
+
+  it('takes the first playing folder without waiting for slower ones', async () => {
+    p._playerEmbedUrl = async (id, base, folder) => `https://emb.example/${folder}`;
+    p.extractM3u8 = async (embed) => {
+      if (!embed.endsWith('/casting')) await new Promise((r) => setTimeout(r, 5000).unref());
+      return { m3u8: `${embed}.m3u8`, referer: 'https://x/' };
+    };
+    p._manifestPlays = async () => true;
+    const started = Date.now();
+    expect((await p._resolveChannel('91')).embedUrl).toBe('https://emb.example/casting');
+    expect(Date.now() - started).toBeLessThan(DliveProvider.PREFERENCE_WINDOW_MS + 1500);
+  });
+
+  it('prefers an earlier folder that succeeds within the preference window', async () => {
+    p._playerEmbedUrl = async (id, base, folder) => `https://emb.example/${folder}`;
+    p.extractM3u8 = async (embed) => {
+      if (embed.endsWith('/player')) await new Promise((r) => setTimeout(r, 120));
+      return { m3u8: `${embed}.m3u8`, referer: 'https://x/' };
+    };
+    p._manifestPlays = async (m3u8) => m3u8.endsWith('/player.m3u8') || m3u8.endsWith('/cast.m3u8');
+    expect((await p._resolveChannel('91')).embedUrl).toBe('https://emb.example/player');
+  });
+
+  it('gives up on a channel at the channel budget', async () => {
+    const saved = DliveProvider.CHANNEL_BUDGET_MS;
+    DliveProvider.CHANNEL_BUDGET_MS = 80;
+    try {
+      p._playerEmbedUrl = () => new Promise((r) => setTimeout(() => r(null), 3000).unref());
+      const started = Date.now();
+      expect(await p._resolveChannel('91')).toBeNull();
+      expect(Date.now() - started).toBeLessThan(1000);
+    } finally {
+      DliveProvider.CHANNEL_BUDGET_MS = saved;
+    }
+  });
+
+  it('skips a host that timed out, without an undici fallback, until the memory expires', async () => {
+    const opts = [];
+    const calls = [];
+    p.proxyFetch = async (url, o) => { calls.push(url); opts.push(o); throw new Error('impit timeout 6000ms'); };
+    expect(await p._fetchPage('https://wideiptv.top/daddy.php?stream=A', 'https://thedaddy.li/')).toBeNull();
+    expect(opts[0].noFallbackOnNetworkError).toBe(true);
+    expect(await p._fetchPage('https://wideiptv.top/daddy.php?stream=B', 'https://thedaddy.li/')).toBeNull();
+    expect(calls).toHaveLength(1);
+
+    p._badHosts.set('wideiptv.top', Date.now() - 1);
+    await p._fetchPage('https://wideiptv.top/daddy.php?stream=C', 'https://thedaddy.li/');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('does not remember a host after an ordinary HTTP failure', async () => {
+    p.proxyFetch = async () => res({ status: 500 });
+    await p._fetchPage('https://flaky.example/x', 'https://thedaddy.li/');
+    expect(p._hostIsBad('flaky.example')).toBe(false);
   });
 
   it('returns null when every manifest fails verification', async () => {

@@ -12,6 +12,11 @@ const StreamicProvider = require('./providers/StreamicProvider');
 const EmbedIndiaProvider = require('./providers/EmbedIndiaProvider');
 const PpvProvider = require('./providers/PpvProvider');
 const TimStreamsProvider = require('./providers/TimStreamsProvider');
+const PitSportProvider = require('./providers/PitSportProvider');
+const ScoreZoneProvider = require('./providers/ScoreZoneProvider');
+const SkTechProvider = require('./providers/SkTechProvider');
+const VavooProvider = require('./providers/VavooProvider');
+const MlbLiveProvider = require('./providers/MlbLiveProvider');
 const StreamCornerProvider = require('./providers/StreamCornerProvider');
 const ZliveProvider = require('./providers/ZliveProvider');
 const DliveProvider = require('./providers/DliveProvider');
@@ -44,6 +49,11 @@ const registrations = {
   streamEastProvider: (c) => new StreamEastProvider(c),
   ak47LiveProvider: (c) => new Ak47LiveProvider(c),
   timStreamsProvider: (c) => new TimStreamsProvider(c),
+  pitSportProvider: (c) => new PitSportProvider(c),
+  scoreZoneProvider: (c) => new ScoreZoneProvider(c),
+  skTechProvider: (c) => new SkTechProvider(c),
+  vavooProvider: (c) => new VavooProvider(c),
+  mlbLiveProvider: (c) => new MlbLiveProvider(c),
   liveTvProvider: (c) => new LiveTVProvider(c),
 };
 

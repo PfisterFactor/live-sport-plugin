@@ -70,6 +70,8 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 // is reserved for the undici fallback, so a hung impit cannot starve it.
 const IMPIT_BUDGET_RATIO = 0.6;
 
+/** impit failures that say the host is slow or unresolvable, which undici cannot fix. */
+const NETWORK_ERROR_RE = /impit timeout|dns error|ENOTFOUND/;
 const CERTIFICATE_ERROR_RE = /InvalidCertificate|UnknownIssuer|certificate has expired/;
 
 /**
@@ -93,13 +95,14 @@ function squashError(err) {
 }
 
 /** Wraps a finished hop result in the response shape callers consume. */
-function toResponse({ status, headers, textData }) {
+function toResponse({ status, headers, bytes }) {
   return {
     ok: status >= 200 && status < 300,
     status,
     headers,
-    text: async () => textData,
-    json: async () => JSON.parse(textData),
+    text: async () => bytes.toString('utf8'),
+    json: async () => JSON.parse(bytes.toString('utf8')),
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
   };
 }
 
@@ -116,12 +119,22 @@ function redirectTarget(status, headers, currentUrl) {
   }
 }
 
+/** Headers a cross-origin redirect hop may carry; Referer, Origin, cookies and custom headers stay with the origin that asked for them. */
+const CROSS_ORIGIN_HEADERS = new Set(['accept', 'accept-language', 'accept-encoding', 'user-agent', 'range']);
+
+/** Plain-object copy of `headers` keeping only names allowed on a cross-origin hop. */
+function crossOriginHeaders(headers) {
+  return Object.fromEntries(Object.entries(normalizeHeaders(headers)).filter(([name]) => CROSS_ORIGIN_HEADERS.has(name)));
+}
+
 /**
  * Runs `send` for the request and every redirect it answers with, up to
  * MAX_REDIRECT_HOPS. 301/302/303 become a bodyless GET (HEAD stays HEAD);
- * 307/308 keep method and body. The deadline covers the whole chain, and
- * `validateUrl` — when given — vets the first URL and every hop before it is
- * requested, so a public host cannot bounce the call into an internal one.
+ * 307/308 keep method and body. A hop to another origin keeps only
+ * CROSS_ORIGIN_HEADERS: CDNs behind provider relays refuse the provider's
+ * Referer. The deadline covers the whole chain, and `validateUrl` — when
+ * given — vets the first URL and every hop before it is requested, so a public
+ * host cannot bounce the call into an internal one.
  */
 async function followHops(url, init, deadlineAt, label, send) {
   let { method, headers, body } = init;
@@ -143,6 +156,7 @@ async function followHops(url, init, deadlineAt, label, send) {
         delete headers['content-length'];
       }
     }
+    if (new URL(next).origin !== new URL(currentUrl).origin) headers = crossOriginHeaders(headers);
     currentUrl = next;
   }
 }
@@ -159,8 +173,8 @@ async function impitSend(impit, hop, manualRedirect) {
           body: hop.body,
           ...(manualRedirect ? { redirect: 'manual' } : {}),
         });
-        const textData = await res.text();
-        return { status: res.status, headers: normalizeHeaders(res.headers), textData };
+        const bytes = Buffer.from(await res.arrayBuffer());
+        return { status: res.status, headers: normalizeHeaders(res.headers), bytes };
       })(),
       new Promise((_, rej) => {
         timer = setTimeout(() => rej(new Error(`impit timeout ${Math.round(hop.remainingMs)}ms`)), hop.remainingMs);
@@ -183,7 +197,7 @@ async function undiciSend(hop, signal) {
     bodyTimeout: hop.remainingMs,
     dispatcher: _undiciAgent,
   });
-  return { status: res.statusCode, headers: normalizeHeaders(res.headers), textData: await res.body.text() };
+  return { status: res.statusCode, headers: normalizeHeaders(res.headers), bytes: Buffer.from(await res.body.arrayBuffer()) };
 }
 
 // -- Core helper --------------------------------------------------------------
@@ -204,11 +218,15 @@ async function undiciSend(hop, signal) {
  * must throw to refuse it; the throw propagates untouched (no fallback).
  *
  * @param {string} url
- * @param {object} opts   - { method, headers, body, signal, timeoutMs, attempts, validateUrl }
- * @returns {{ ok, status, headers, text: () => string, json: () => object }}
+ * `noFallbackOnNetworkError` rethrows an impit timeout or DNS failure at once
+ * instead of retrying and falling back to undici; a slow or unresolvable host
+ * is not a TLS-fingerprint problem.
+ *
+ * @param {object} opts   - { method, headers, body, signal, timeoutMs, attempts, validateUrl, noFallbackOnNetworkError }
+ * @returns {{ ok, status, headers, text: () => string, json: () => object, arrayBuffer: () => ArrayBuffer }}
  */
 async function safeFetch(url, opts = {}) {
-  const { method = 'GET', headers = {}, body, signal, attempts = 3, validateUrl } = opts;
+  const { method = 'GET', headers = {}, body, signal, attempts = 3, validateUrl, noFallbackOnNetworkError = false } = opts;
   let timeoutMs = opts.timeoutMs || 15000;
   const budgetEnd = fetchDeadline.getStore();
   if (budgetEnd) {
@@ -248,6 +266,7 @@ async function safeFetch(url, opts = {}) {
       } catch (impitErr) {
         if (impitErr && impitErr.blocked) throw impitErr;
         lastErr = impitErr;
+        if (noFallbackOnNetworkError && NETWORK_ERROR_RE.test(String(impitErr))) throw impitErr;
         if (CERTIFICATE_ERROR_RE.test(String(impitErr))) break;
         const backoff = Math.min(800 * attempt, impitDeadline - Date.now());
         if (attempt < maxAttempts && backoff > 0) await new Promise(r => setTimeout(r, backoff));
