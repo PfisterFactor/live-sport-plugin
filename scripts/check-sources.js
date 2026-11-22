@@ -1,4 +1,11 @@
 const { request } = require('undici');
+const { fetchRemoteConfigEntries } = require('../src/providers/SkTechProvider');
+
+/** The SK Tech app backend host is published through Firebase Remote Config. */
+async function skTechEventsUrl() {
+  const { api_url: host } = await fetchRemoteConfigEntries();
+  return `${host.replace(/\/$/, '')}/events.txt`;
+}
 
 const sources = [
   { name: 'StreamSports', url: 'https://api.cdnlivetv.is/matches' },
@@ -15,6 +22,7 @@ const sources = [
   { name: 'TimStreams', url: 'https://tim-streams.com/api/live-upcoming' },
   { name: 'PitSport', url: 'https://pitsport.st/api/v1/home' },
   { name: 'ScoreZone', url: 'https://scorezone-live.scorezone.workers.dev/api/iptv/channels' },
+  { name: 'SK Tech (app backend)', url: skTechEventsUrl, headers: { 'User-Agent': 'okhttp/4.12.0' } },
   { name: 'SK Tech (Sony LIV feed)', url: 'https://nonyliv.saqlainhaider8198.workers.dev/nony2.m3u' },
   { name: 'Vavoo', url: 'https://www.vypn.net/' },
   { name: 'MLBLive', url: 'https://mlblive.net/world-series-replays' },
@@ -26,12 +34,13 @@ async function checkSources() {
   
   const results = await Promise.allSettled(sources.map(async (source) => {
     try {
-      const response = await request(source.url, { method: 'GET', headersTimeout: 10000, bodyTimeout: 10000 });
+      const url = typeof source.url === 'function' ? await source.url() : source.url;
+      const response = await request(url, { method: 'GET', headers: source.headers, headersTimeout: 10000, bodyTimeout: 10000 });
       await response.body.text().catch(() => {});
       if (response.statusCode >= 400) {
         return { ...source, status: 'FAILED', error: `HTTP ${response.statusCode}` };
       }
-      return { ...source, status: 'OK', statusCode: response.statusCode };
+      return { ...source, url, status: 'OK', statusCode: response.statusCode };
     } catch (error) {
       return { ...source, status: 'FAILED', error: error.message };
     }
@@ -40,10 +49,11 @@ async function checkSources() {
   results.forEach(result => {
     if (result.status === 'fulfilled') {
       const res = result.value;
+      const shown = typeof res.url === 'string' ? res.url : '(resolved at runtime)';
       if (res.status === 'OK') {
-        console.log(`[✓] ${res.name.padEnd(16)} | RUNNING | ${res.url}`);
+        console.log(`[✓] ${res.name.padEnd(16)} | RUNNING | ${shown}`);
       } else {
-        console.log(`[✗] ${res.name.padEnd(16)} | DOWN    | ${res.error} | ${res.url}`);
+        console.log(`[✗] ${res.name.padEnd(16)} | DOWN    | ${res.error} | ${shown}`);
       }
     } else {
       console.log(`[✗] Failed to process ${result.reason}`);

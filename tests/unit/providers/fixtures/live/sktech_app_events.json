@@ -1,0 +1,14 @@
+[
+ {
+  "event": "{\"category\":\"Football\",\"eventName\":\"Serie A\",\"eventLogo\":\"http://img.sofascore.com/api/v1/unique-tournament/23/image/dark\",\"teamAName\":\"Atalanta\",\"teamBName\":\"Inter\",\"teamAFlag\":\"https://img.sofascore.com/api/v1/team/2686/image\",\"teamBFlag\":\"https://img.sofascore.com/api/v1/team/2697/image\",\"links\":\"pro/U2VyaWUgQS1BdGFsYW50YS12cy1JbnRlcjE3OTUzMjQ3MjI1MDU.txt\",\"time\":\"19:45:00\",\"date\":\"22/11/2026\",\"end_time\":\"22:05:00\",\"end_date\":\"22/11/2026\",\"visible\":true,\"priority\":-1,\"link_names\":[\"TNT SPORTS \",\"beIN SPORTS \",\"CBS SPORTS \",\"SPORT 1 CZ\"]}"
+ },
+ {
+  "event": "{\"category\":\"Basketball\",\"eventName\":\"NBA\",\"eventLogo\":\"http://img.sofascore.com/api/v1/unique-tournament/132/image/dark\",\"teamAName\":\"Utah Jazz\",\"teamBName\":\"Dallas Mavericks\",\"teamAFlag\":\"https://img.sofascore.com/api/v1/team/3434/image\",\"teamBFlag\":\"https://img.sofascore.com/api/v1/team/3411/image\",\"links\":\"pro/TkJBLVV0YWggSmF6ei12cy1EYWxsYXMgTWF2ZXJpY2tzMTc5NTI5MTEwNjcyMw.txt\",\"time\":\"00:00:00\",\"date\":\"23/11/2026\",\"end_time\":\"03:00:00\",\"end_date\":\"23/11/2026\",\"visible\":true,\"priority\":-1,\"link_names\":[\"SK LIVE \",\"SD SERVER \"]}"
+ },
+ {
+  "event": "{\"category\":\"Cricket\",\"eventName\":\"ICC World Test Championship\",\"eventLogo\":\"http://img.sofascore.com/api/v1/unique-tournament/18833/image/dark\",\"teamAName\":\"New Zealand\",\"teamBName\":\"India\",\"teamAFlag\":\"https://img.sofascore.com/api/v1/team/187755/image\",\"teamBFlag\":\"https://img.sofascore.com/api/v1/team/187765/image\",\"links\":\"pro/SUNDIFdvcmxkIFRlc3QgQ2hhbXBpb25zaGlwLU5ldyBaZWFsYW5kLXZzLUluZGlhMTc5NDg2NDUwNjQ4Mg.txt\",\"time\":\"22:00:00\",\"date\":\"22/11/2026\",\"end_time\":\"07:30:00\",\"end_date\":\"23/11/2026\",\"visible\":true,\"priority\":-1,\"link_names\":[\"TNT SPORTS \",\"WILLOW ADFREE \",\"HINDI 🇮🇳\",\"ENGLISH 🇮🇳\",\"TAMIL 🇮🇳\",\"TELUGU 🇮🇳\",\"KANNADA 🇮🇳\"]}"
+ },
+ {
+  "event": "{\"visible\":false,\"priority\":-1,\"category\":\"Tennis\",\"eventName\":\"ATP Challenger Tour\",\"eventLogo\":\"\",\"teamAName\":\" 🎾 Ténis – ATP Challenger Tour\",\"teamBName\":\"\",\"teamAFlag\":\"https://iili.io/ByC1ObI.png\",\"teamBFlag\":\"\",\"date\":\"02/09/2026\",\"time\":\"14:00:00\",\"link_names\":[\"SPORT TV\",\"SPORT TV\",\"BEIN SPORTS\",\"TENNIS CHANNEL 2\",\"TENNIS CHANNEL HD\",\"ATP\"],\"links\":\"pro/8J+liiBCT1hJTkc6LUNoaXNvcmEgdnMgV2lsZGVyLXZzLTE3NzUyNjc2MTg5NTg.txt\"}"
+ }
+]

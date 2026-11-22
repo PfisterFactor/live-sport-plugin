@@ -4,7 +4,10 @@ const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 const { extractTeamsFromTitle } = require('../services/TeamNameExtractor');
-const { manifestProxyUrl, dashHlsUrl } = require('../proxyUrl');
+const { manifestProxyUrl } = require('../proxyUrl');
+const {
+  eventTiming, applyHeaderPairs, clearKeyDashStream, embedIndiaUrl, embedIndiaStreams,
+} = require('../services/AppFeed');
 
 const DEFAULT_REFERER = 'http://www.fawanews.sc/';
 const DEFAULT_ORIGIN = 'http://www.fawanews.sc';
@@ -26,47 +29,6 @@ const AK47_IV = Buffer.from('dz00QVhsNmZZU0Fw', 'ascii');
 
 const BLOCKED_HOST_RE = /embed\.st|embedindia\.st|strmd\.st|gasm|wasm/i;
 const DASH_RE = /\.mpd(\?|$)|\/dash\/|cenc/i;
-const FINISHED_GRACE_MS = 30 * 60 * 1000;
-const UNKNOWN_END_MS = 4 * 3600e3;
-const DAY_MS = 24 * 3600e3;
-
-/** Parse "dd/mm/yyyy" + "hh:mm[:ss]" (UTC) into epoch ms, or 0. */
-function parseEventTime(date, time) {
-  if (!date || !time) return 0;
-  const d = String(date).split('/').map(Number);
-  const t = String(time).split(':').map(Number);
-  if (d.length !== 3 || !d[0] || !d[1] || !d[2]) return 0;
-  const ms = Date.UTC(d[2], d[1] - 1, d[0], t[0] || 0, t[1] || 0, t[2] || 0);
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-/**
- * Kickoff in epoch ms. The feed reuses old entries and only bumps end_date,
- * leaving a start days before the end; a span over a day is read as the
- * start time on the end date.
- */
-function eventStartMs(ev, endMs) {
-  const startMs = parseEventTime(ev.date, ev.time);
-  if (!startMs || !endMs || endMs - startMs <= DAY_MS) return startMs;
-  const sameDay = parseEventTime(ev.end_date, ev.time);
-  return sameDay > endMs ? sameDay - DAY_MS : sameDay;
-}
-
-/**
- * Apply a "k=v&k=v" suffix (from "url|Referer=...&User-Agent=..." links) onto
- * the header set.
- */
-function applyHeaderPairs(suffix, headers) {
-  for (const pair of suffix.split('&')) {
-    const eq = pair.indexOf('=');
-    if (eq === -1) continue;
-    const k = pair.slice(0, eq).trim().toLowerCase();
-    const v = pair.slice(eq + 1).trim();
-    if (k === 'referer' || k === 'http-referrer') headers.referer = v;
-    else if (k === 'origin' || k === 'http-origin') headers.origin = v;
-    else if (k === 'user-agent' || k === 'http-user-agent') headers.userAgent = v;
-  }
-}
 
 /**
  * AK47 / hellobabu app backend. Event lists and per-event link lists are
@@ -200,8 +162,7 @@ class Ak47LiveProvider extends BaseProvider {
       try { ev = typeof item.event === 'string' ? JSON.parse(item.event) : item.event; } catch (_) { continue; }
       if (!ev || ev.visible === false || !ev.teamAName || !ev.teamBName) continue;
 
-      const endMs = parseEventTime(ev.end_date, ev.end_time);
-      const startMs = eventStartMs(ev, endMs);
+      const { startMs, finished, status } = eventTiming(ev, now);
       const t1 = ev.teamAName.trim();
       const t2 = ev.teamBName.trim();
       const isMatchup = Boolean(t1 && t2 && t1.toLowerCase() !== t2.toLowerCase());
@@ -211,16 +172,12 @@ class Ak47LiveProvider extends BaseProvider {
       const n1 = this.normalizeStr(t1);
       const n2 = this.normalizeStr(t2);
 
-      const finished = endMs > 0
-        ? now > endMs + FINISHED_GRACE_MS
-        : (startMs > 0 && now > startMs + UNKNOWN_END_MS);
       if (finished) {
         ctx.finishedSlugs.add(slug);
         if (t1 && t2) { ctx.finishedPairs.add(`${n1}|${n2}`); ctx.finishedPairs.add(`${n2}|${n1}`); }
         continue;
       }
 
-      const status = startMs > 0 && now < startMs ? 'upcoming' : 'live';
       const known = { matchDate: startMs > 0 ? String(startMs) : '', status };
       ctx.known.set(slug, known);
       if (t1 && t2) { ctx.known.set(`${n1}|${n2}`, known); ctx.known.set(`${n2}|${n1}`, known); }
@@ -360,61 +317,6 @@ class Ak47LiveProvider extends BaseProvider {
     }
   }
 
-  /** Embed page URL of an embedindia-family tokenApi entry ({type:'embed', url}), or ''. */
-  _embedIndiaUrl(selected) {
-    if (!this.embedIndiaProvider) return '';
-    let tokenObj;
-    try {
-      tokenObj = typeof selected.tokenApi === 'string' ? JSON.parse(selected.tokenApi) : selected.tokenApi;
-    } catch (_) { return ''; }
-    const url = tokenObj && tokenObj.type === 'embed' ? tokenObj.api : '';
-    return this.embedIndiaProvider.isEmbedUrl(url) ? url : '';
-  }
-
-  /** Signed m3u8 from an embedindia-family embed page, proxied with renewal through that embed. */
-  async _resolveEmbedIndia(embedUrl, matchTitle, channelLabel) {
-    const extracted = await this.embedIndiaProvider.extractM3u8(embedUrl);
-    if (!extracted) return [];
-    return [new StreamEntity({
-      name: this.name,
-      title: `${matchTitle || 'Live Event'} (${channelLabel})`,
-      url: manifestProxyUrl({ url: extracted.m3u8, referer: extracted.referer, renew: 'embedindia', embed: embedUrl }),
-      behaviorHints: { notWebReady: true },
-      resolution: 'HD',
-    })];
-  }
-
-  /**
-   * A pro/*.txt row with an .mpd `link` ("<mpd>|k=v&k=v") and a ClearKey (`api`
-   * "<kid>:<key>", or `key`/`kid`) as a relayed HLS stream. Null when the row is
-   * not ClearKey DASH or its key is not 32 hex chars.
-   */
-  _clearKeyDash(selected, matchTitle, channelLabel) {
-    const [mpdUrl, ...suffix] = String(selected.link || '').split('|');
-    if (!/\.mpd(\?|$)/i.test(mpdUrl.trim())) return null;
-
-    const [kid, key] = typeof selected.api === 'string' && selected.api.includes(':')
-      ? selected.api.trim().split(':')
-      : [selected.kid, selected.key];
-    const linkHeaders = {};
-    applyHeaderPairs(suffix.join('|'), linkHeaders);
-    const url = dashHlsUrl({
-      mpdUrl: mpdUrl.trim(),
-      key: String(key || '').trim(),
-      kid: String(kid || '').trim(),
-      headers: { 'User-Agent': linkHeaders.userAgent || DEFAULT_UA, Referer: linkHeaders.referer, Origin: linkHeaders.origin },
-    });
-    if (!url) return null;
-
-    return new StreamEntity({
-      name: this.name,
-      title: `${matchTitle || 'Live Event'} (${channelLabel})`,
-      url,
-      behaviorHints: { notWebReady: true },
-      resolution: 'FHD',
-    });
-  }
-
   /** Resolve one source (an encrypted pro/*.txt channel or a direct playlist URL) into a proxied HLS stream. */
   async resolveStream(sourceId, matchCategory, matchTitle, src = {}) {
     let streamUrl = src.id || sourceId;
@@ -437,11 +339,11 @@ class Ak47LiveProvider extends BaseProvider {
             : null;
           if (selected) {
             channelLabel = selected.name ? selected.name.trim() : channelLabel;
-            const dash = this._clearKeyDash(selected, matchTitle, channelLabel);
+            const dash = clearKeyDashStream(this.name, selected, matchTitle, channelLabel);
             if (dash) return [dash];
             if (selected.drm_scheme || selected.key || selected.kid) return [];
-            const embedUrl = selected.link ? '' : this._embedIndiaUrl(selected);
-            if (embedUrl) return await this._resolveEmbedIndia(embedUrl, matchTitle, channelLabel);
+            const embedUrl = selected.link ? '' : embedIndiaUrl(selected.tokenApi, this.embedIndiaProvider);
+            if (embedUrl) return await embedIndiaStreams(this.name, this.embedIndiaProvider, embedUrl, matchTitle, channelLabel);
 
             const tokenApiStr = typeof selected.tokenApi === 'string' ? selected.tokenApi : JSON.stringify(selected.tokenApi || '');
             if (BLOCKED_HOST_RE.test(selected.link || '') || BLOCKED_HOST_RE.test(tokenApiStr)) return [];
