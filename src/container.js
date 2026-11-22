@@ -11,6 +11,7 @@ const CdnLiveProvider = require('./providers/CdnLiveProvider');
 const StreamicProvider = require('./providers/StreamicProvider');
 const EmbedIndiaProvider = require('./providers/EmbedIndiaProvider');
 const PpvProvider = require('./providers/PpvProvider');
+const TimStreamsProvider = require('./providers/TimStreamsProvider');
 const StreamCornerProvider = require('./providers/StreamCornerProvider');
 const ZliveProvider = require('./providers/ZliveProvider');
 const DliveProvider = require('./providers/DliveProvider');
@@ -42,6 +43,7 @@ const registrations = {
   damiTvProvider: (c) => new DamiTvProvider(c),
   streamEastProvider: (c) => new StreamEastProvider(c),
   ak47LiveProvider: (c) => new Ak47LiveProvider(c),
+  timStreamsProvider: (c) => new TimStreamsProvider(c),
   liveTvProvider: (c) => new LiveTVProvider(c),
 };
 

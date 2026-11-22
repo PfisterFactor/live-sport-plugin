@@ -9,9 +9,10 @@ const sources = [
   { name: 'PPV / BinTv', url: 'https://api.ppv.st/api/streams' },
   { name: 'NTV', url: 'http://ntv.cx' },
   { name: 'CdnLive', url: 'https://api.cdnlivetv.tv/api/v1/events/sports/?user=cdnlivetv&plan=free' },
-  { name: 'StreamCorner', url: 'https://data.daniellemarsh444.workers.dev/corner' },
+  { name: 'StreamCorner', url: 'https://streamcorner.cloud/' },
   { name: 'ZLive', url: 'https://iptv.zlive.st/channels.json' },
-  { name: 'DaddyLive', url: 'https://dlive.sx/index.php' },
+  { name: 'DaddyLive', url: 'https://thedaddy.li/' },
+  { name: 'TimStreams', url: 'https://tim-streams.com/api/live-upcoming' },
   { name: 'SportsBite', url: 'https://sportsbite.org/' },
 ];
 

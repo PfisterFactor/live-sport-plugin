@@ -1,8 +1,8 @@
 /**
  * Child-process launcher for the vendored StreamCorner provider-data worker.
  *
- * streamcorner.st fetches its catalog through an obfuscated ES-module worker
- * (streamcorner/Boq5hifj.js and its imported chunks). The worker signs each
+ * streamcorner.cloud fetches its catalog through an obfuscated ES-module worker
+ * (streamcorner/rauMAbe8.js and its imported chunks). The worker signs each
  * request, posts it to a Cloudflare Worker host, and decodes the reply. Its
  * chunks refuse to run unless they believe they are the site's own scripts
  * inside a dedicated worker, so this launcher recreates that environment:
@@ -10,7 +10,7 @@
  *  - ES module imports are rewired to a tiny synchronous loader;
  *  - `import.meta` is replaced by a placeholder that Function.prototype.toString
  *    maps back to the original text (the chunks hash their own source);
- *  - every chunk gets a `sourceURL` on https://streamcorner.st/assets/ so stack
+ *  - every chunk gets a `sourceURL` on https://streamcorner.cloud/assets/ so stack
  *    frames carry the origin and file names the chunks allow-list;
  *  - the worker-scope globals and `location` the chunks probe are provided.
  *
@@ -24,10 +24,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const ASSET_BASE = 'https://streamcorner.st/assets/';
+const ASSET_BASE = 'https://streamcorner.cloud/assets/';
 const CHUNK_DIR = path.join(__dirname, 'streamcorner');
-const WORKER_ENTRY = 'Boq5hifj';
-const NONCE_KEY = '_7ac9e30576c825e5209e1fb1';
+const WORKER_ENTRY = 'rauMAbe8';
+const NONCE_KEY = '_4f77eb55fb8d60743df7394a';
 const TIMEOUT_MS = 12000;
 
 const nativeText = new WeakMap();

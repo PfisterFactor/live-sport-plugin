@@ -93,19 +93,12 @@
       "first_seen": "",
       "note": "Already registered; WatchFooty fallback."
     },
-    "dlstreams.st": {
+    "thedaddy.li": {
       "role": "provider",
       "strategy": "direct",
-      "referer": "https://dlstreams.st/",
-      "first_seen": "",
-      "note": "DaddyLive primary base domain."
-    },
-    "dlive.sx": {
-      "role": "provider",
-      "strategy": "direct",
-      "referer": "https://dlive.sx/",
-      "first_seen": "",
-      "note": "DaddyLive mirror base domain."
+      "referer": "https://thedaddy.li/",
+      "first_seen": "2026-11-22",
+      "note": "DaddyLive base domain."
     }
   },
   "terminal_hosts": {

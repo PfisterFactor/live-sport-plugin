@@ -9,7 +9,7 @@ const path = require('path');
 const EMBEDINDIA_PATH_RE = /^https?:\/\/[^/]+\/embed(?:-noads)?\//;
 
 /**
- * streamcorner.st. The site's SPA loads its catalog from a pool of
+ * streamcorner.cloud. The site's SPA loads its catalog from a pool of
  * Cloudflare Worker endpoints. Requests are signed and replies decoded by the
  * site's own provider-data worker, vendored under ./streamcorner and executed
  * out-of-process by run_streamcorner_native.js.
@@ -18,7 +18,7 @@ class StreamCornerProvider extends BaseProvider {
   constructor(opts) {
     super(opts);
     this.name = 'StreamCorner';
-    this.refererOrigin = 'https://streamcorner.st';
+    this.refererOrigin = 'https://streamcorner.cloud';
     this.embedIndiaProvider = opts.embedIndiaProvider;
     this.listEndpoints = ['admin', 'nfl', 'alpha', 'beta', '001', 'extra003', 'skygo'];
     // Events are dropped this long after their end time, or after a fixed

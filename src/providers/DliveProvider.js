@@ -93,12 +93,12 @@ function resolveSyncTimeoutMs() {
 }
 
 /**
- * dlive.sx (DaddyLiveHD). The daily schedule is plain HTML; every event lists
+ * thedaddy.li (DaddyLiveHD). The daily schedule is plain HTML; every event lists
  * channel links of the form /watch.php?id=<N>.
  *
- * Channel players are served from several mirror folders (/cast, /casting,
- * /watch, /player, /plus, /stream) on two domains, and each folder embeds a
- * different player host. A host's page is resolved by whichever strategy it
+ * Channel players are served from several mirror folders (/player, /cast,
+ * /plus, /casting) and each folder embeds a different player host. The
+ * cloaked dembed.st folders (/stream, /watch) are not probed. A host's page is resolved by whichever strategy it
  * needs: the `window._econfig` envelope (base64 -> split into 4 equal chunks
  * -> drop the 4th character of each -> base64-decode each -> reassemble in the
  * order [2,0,3,1] -> base64 -> JSON), a plain manifest URL, a JSON player hop,
@@ -114,9 +114,9 @@ class DliveProvider extends BaseProvider {
     super(opts);
     this.name = 'DaddyLive';
     this.sourceName = 'dlive';
-    this.baseUrl = 'https://dlive.sx';
-    this.baseDomains = ['https://dlive.sx', 'https://dlstreams.st'];
-    this.folders = ['cast', 'player', 'casting', 'plus', 'watch', 'stream'];
+    this.baseUrl = DliveProvider.BASE_URL;
+    this.baseDomains = [DliveProvider.BASE_URL];
+    this.folders = ['player', 'cast', 'plus', 'casting'];
     this.domainRegistry = (opts && opts.iframeDomainRegistry) || new IframeDomainRegistry();
 
     /**
@@ -727,6 +727,9 @@ class DliveProvider extends BaseProvider {
     }));
   }
 }
+
+/** Canonical site origin; also the Referer the schedule pages expect. */
+DliveProvider.BASE_URL = 'https://thedaddy.li';
 
 /** Channels resolved per event; events can list a dozen, each costing several fetches. */
 DliveProvider.MAX_CHANNELS = 4;

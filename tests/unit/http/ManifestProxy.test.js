@@ -382,3 +382,64 @@ describe('GET /api/manifest token renewal', () => {
     expect(minted).toBe(2);
   }, renewal.MIN_RENEW_INTERVAL_MS + 10000);
 });
+
+describe('PNG-wrapped segments', () => {
+  const { pngSegment, tsBytes } = require('../providers/fixtures/pngSegment');
+  const { decodePngSegment } = require('../../../src/services/PngSegmentDecoder');
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; });
+
+  it('decodes KWP1-packed and bare TS payloads, with row filters', () => {
+    const ts = tsBytes(40);
+    const kwp = Buffer.concat([Buffer.from('KWP1'), Buffer.from([0, 0, 0x1d, 0x60]), ts]);
+    expect(decodePngSegment(pngSegment(kwp)).equals(ts)).toBe(true);
+    expect(decodePngSegment(pngSegment(kwp, { filter: 1 })).equals(ts)).toBe(true);
+    expect(decodePngSegment(pngSegment(kwp, { filter: 2 })).equals(ts)).toBe(true);
+    expect(decodePngSegment(pngSegment(ts)).equals(ts)).toBe(true);
+  });
+
+  it('passes non-PNG bytes through and rejects PNGs without media', () => {
+    const ts = tsBytes(3);
+    expect(decodePngSegment(ts).equals(ts)).toBe(true);
+    expect(() => decodePngSegment(pngSegment(Buffer.alloc(300, 1)))).toThrow();
+  });
+
+  it('routes segments of a flagged playlist through /api/segment and keeps others direct', async () => {
+    const media = '#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nhttps://img.example.com/a.png\n';
+    safeFetchSpy.mockImplementation(async () => upstream(media));
+    const flagged = await (await proxy(freshUrl(), '&png=1&referer=https%3A%2F%2Fr.example%2F')).text();
+    expect(flagged).toContain('/api/segment?url=https%3A%2F%2Fimg.example.com%2Fa.png');
+    const plain = await (await proxy(freshUrl())).text();
+    expect(plain).toContain('https://img.example.com/a.png');
+    expect(plain).not.toContain('/api/segment');
+  });
+
+  it('propagates the flag to variant playlists of a master', async () => {
+    const master = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nv1.m3u8\n';
+    safeFetchSpy.mockImplementation(async () => upstream(master));
+    const body = await (await proxy(freshUrl(), '&png=1')).text();
+    expect(body).toMatch(/\/api\/manifest\?url=.*&png=1/);
+  });
+
+  it('serves the decoded transport stream as video/mp2t', async () => {
+    const ts = tsBytes(20);
+    const png = pngSegment(Buffer.concat([Buffer.from('KWP1'), Buffer.from([0, 0, 0x0e, 0xb0]), ts]));
+    const guardSpy = spyOn(guard, 'assertOutboundUrl').mockResolvedValue({ ok: true });
+    globalThis.fetch = (url, opts) => (String(url).startsWith(base)
+      ? realFetch(url, opts)
+      : Promise.resolve(new Response(png, { status: 200 })));
+    try {
+      const res = await fetch(`${base}/api/segment?url=${encodeURIComponent('https://img.example.com/a.png')}&referer=${encodeURIComponent('https://r.example/')}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('video/mp2t');
+      expect(Buffer.from(await res.arrayBuffer()).equals(ts)).toBe(true);
+    } finally {
+      guardSpy.mockRestore();
+    }
+  });
+
+  it('rejects unsafe segment targets', async () => {
+    const res = await fetch(`${base}/api/segment?url=${encodeURIComponent('http://127.0.0.1/x.png')}`);
+    expect(res.status).toBe(400);
+  });
+});

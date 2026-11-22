@@ -22,12 +22,13 @@ const SOURCES = {
   sportyhunter: { priority: 12, registration: 'sportyHunterProvider', label: 'SportyHunter', defaultEnabled: true, referer: 'https://sportsindx.st/' },
   embedindia: { priority: 15, registration: 'embedIndiaProvider', label: 'EmbedIndia', defaultEnabled: false, passSrc: true },
   ppv: { priority: 1.5, registration: 'ppvProvider', label: 'PPV', defaultEnabled: true, passSrc: true },
-  streamcorner: { priority: 6, registration: 'streamCornerProvider', label: 'StreamCorner', defaultEnabled: true, referer: 'https://streamcorner.st/' },
+  streamcorner: { priority: 6, registration: 'streamCornerProvider', label: 'StreamCorner', defaultEnabled: true, referer: 'https://streamcorner.cloud/' },
   zlive: { priority: 7, registration: 'zliveProvider', label: 'ZLive', defaultEnabled: true, passSrc: true },
   livetv: { priority: 2, registration: 'liveTvProvider', label: 'LiveTV', defaultEnabled: true, passSrc: true },
   damitv: { priority: 3, registration: 'damiTvProvider', label: 'DamiTV', defaultEnabled: true, passSrc: true, referer: 'https://damitv.st/' },
-  dlive: { priority: 10, registration: 'dliveProvider', label: 'DaddyLive', defaultEnabled: true, passSrc: true, referer: 'https://dlive.sx/' },
+  dlive: { priority: 10, registration: 'dliveProvider', label: 'DaddyLive', defaultEnabled: true, passSrc: true, referer: 'https://thedaddy.li/' },
   streameast: { priority: 7, registration: 'streamEastProvider', label: 'StreamEast', defaultEnabled: true },
+  timstreams: { priority: 9, registration: 'timStreamsProvider', label: 'TimStreams', defaultEnabled: true, passSrc: true },
   ak47live: { priority: 3, registration: 'ak47LiveProvider', label: 'Ak47Live', defaultEnabled: true, passSrc: true },
 };
 

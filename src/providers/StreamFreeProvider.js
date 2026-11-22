@@ -4,7 +4,7 @@ const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 const { manifestProxyUrl } = require('../proxyUrl');
 
-/** Reads the `_0x` quality -> {_t,_e,_n} token map out of a StreamFree embed page. */
+/** Reads the `_0x` variant -> {_t,_ta,_e,_s,_sa} token map out of a StreamFree embed page. */
 function parseEmbedTokens(html) {
   if (!html) return null;
   const match = html.match(/const\s+_0x\s*=\s*(\{.*?\});/);
@@ -14,6 +14,11 @@ function parseEmbedTokens(html) {
   } catch (_) {
     return null;
   }
+}
+
+/** Builds the signed query string from one embed token entry. */
+function signedQuery(t) {
+  return new URLSearchParams({ _t: t._t, _ta: t._ta, _e: t._e, _s: t._s, _sa: t._sa }).toString();
 }
 
 class StreamFreeProvider extends BaseProvider {
@@ -42,6 +47,14 @@ class StreamFreeProvider extends BaseProvider {
         return await res.text();
       }
     );
+    this.sourcesFetcher = this.circuitBreaker.wrap(
+      this.name + '_fetchSources',
+      async (url) => {
+        const res = await this.proxyFetch(url, { headers: { 'User-Agent': DEFAULT_UA } });
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return await res.json();
+      }
+    );
     this.streamKeyFetcher = this.circuitBreaker.wrap(
       this.name + '_fetchStreamKey',
       async (url) => {
@@ -54,13 +67,12 @@ class StreamFreeProvider extends BaseProvider {
   }
 
   /**
-   * Re-signs an expired StreamFree manifest URL. The path stays the same; only
-   * the `_t`/`_e`/`_n` token trio is re-read from the embed page, matched to
-   * the quality already present in the dead URL's path segment.
+   * Re-signs an expired StreamFree manifest URL. The path stays the same; the
+   * token set is re-read from the embed page entry keyed by the variant name in
+   * the dead URL.
    */
   async refreshSignedUrl(embedUrl, deadUrl) {
-    const html = await this.embedFetcher.fire(embedUrl);
-    const tokens = parseEmbedTokens(html);
+    const tokens = parseEmbedTokens(await this.embedFetcher.fire(embedUrl));
     if (!tokens) return null;
 
     let parsed;
@@ -70,16 +82,10 @@ class StreamFreeProvider extends BaseProvider {
       return null;
     }
 
-    const segment = parsed.pathname.split('/').filter(Boolean).slice(-2)[0] || '';
-    const quality = Object.keys(tokens)
-      .filter((q) => tokens[q] && tokens[q]._t && segment.includes(q))
-      .sort((a, b) => b.length - a.length)[0];
-    if (!quality) return null;
-
-    const t = tokens[quality];
-    parsed.searchParams.set('_t', t._t);
-    parsed.searchParams.set('_e', t._e);
-    parsed.searchParams.set('_n', t._n);
+    const variant = parsed.pathname.split('/').filter(Boolean).slice(-2)[0] || '';
+    const t = tokens[variant];
+    if (!t || !t._t) return null;
+    parsed.search = signedQuery(t);
     return { m3u8: parsed.toString(), referer: embedUrl };
   }
 
@@ -121,42 +127,17 @@ class StreamFreeProvider extends BaseProvider {
     return matches;
   }
 
-  async resolveStream(sourceId, matchCategory, matchTitle) {
+  async resolveStream(sourceId) {
     try {
-      const { safeFetch } = require('../impitClient');
-      const resScore = (q) => { const m = String(q).match(/(\d+)/); return m ? parseInt(m[1], 10) : 0; };
-
-      // ── Step 1: Find all available sources from stream-status ────────────────
-      // Sources keyed "1".."5". Source 1 = main embed (suffix ''), 2..5 = backup (suffix '2'..'5').
-      let availableSources = [];
+      let sources = [];
       try {
-        const statusRes = await safeFetch(`https://streamfree.top/api/stream-status/${sourceId}`, {
-          headers: { 'User-Agent': DEFAULT_UA },
-          timeoutMs: 8000
-        });
-        if (statusRes.status === 200) {
-          const statusData = await statusRes.json();
-          const sources = statusData.sources || {};
-          for (const [num, s] of Object.entries(sources)) {
-            if (s && s.available) {
-              availableSources.push({
-                srcNum: num,
-                suffix: num === '1' ? '' : num,
-                qualities: s.qualities || {}
-              });
-            }
-          }
-        }
+        const data = await this.sourcesFetcher.fire(`https://streamfree.top/api/v1/sources/${sourceId}`);
+        sources = ((data && data.sources) || []).filter((s) => s && s.live && s.url);
       } catch (e) {
-        console.warn(`[StreamFree] stream-status fetch failed for ${sourceId}:`, e.message);
+        console.warn(`[StreamFree] sources fetch failed for ${sourceId}:`, e.message);
       }
+      if (sources.length === 0) return [];
 
-      // If stream-status gave us nothing, fall back to source 1 only
-      if (availableSources.length === 0) {
-        availableSources = [{ srcNum: '1', suffix: '', qualities: {} }];
-      }
-
-      // ── Step 2: Fetch stream-key once (same endpoint for all sources) ─────────
       let streamKeyData = null;
       try {
         streamKeyData = await this.streamKeyFetcher.fire(`https://streamfree.top/get-stream-key/${sourceId}`);
@@ -164,66 +145,43 @@ class StreamFreeProvider extends BaseProvider {
         console.warn(`[StreamFree] get-stream-key failed for ${sourceId}:`, e.message);
       }
 
-      // ── Step 3: For each available source, fetch its embed + build stream ────
       const streams = [];
-      for (const src of availableSources) {
+      for (const src of sources) {
         try {
-          // Each source has its own embed page with its own _0x token set
-          const embedUrl = `https://streamfree.top/embed/${matchCategory}/${sourceId}${src.suffix}`;
-          const html = await this.embedFetcher.fire(embedUrl);
-          if (!html) continue;
+          const embedUrl = src.url;
+          const variant = new URL(embedUrl).pathname.split('/').filter(Boolean).pop();
+          const t = parseEmbedTokens(await this.embedFetcher.fire(embedUrl))?.[variant];
+          if (!t || !t._t) continue;
 
-          const tokens = parseEmbedTokens(html);
-          if (!tokens) {
-            console.warn(`[StreamFree] No _0x tokens in embed for ${sourceId}${src.suffix}`);
-            continue;
-          }
-
-          // Pick best quality: prefer stream-status confirmed ones, fallback to all sorted by res
-          const tokenKeys = Object.keys(tokens).filter(k => tokens[k] && tokens[k]._t);
-          const confirmed = tokenKeys.filter(q => src.qualities[q]);
-          const ordered = (confirmed.length ? confirmed : tokenKeys).sort((a, b) => resScore(b) - resScore(a));
-          const bestQuality = ordered[0] || null;
-          const t = bestQuality ? tokens[bestQuality] : null;
-          if (!bestQuality || !t) continue;
-
-          // Build the .m3u8 URL — path uses key + quality + source suffix
-          let targetUrl = '';
+          let targetUrl;
+          let isOwnSigned = false;
           if (streamKeyData && streamKeyData.is_external && streamKeyData.external_url) {
             targetUrl = streamKeyData.external_url;
           } else {
-            const serverName = (streamKeyData && streamKeyData.server_name) ? streamKeyData.server_name : 'origin';
-            const pathSegment = `${sourceId}${bestQuality}${src.suffix}`;
-            const hlsPath = serverName !== 'origin'
-              ? `https://streamfree.top/live-cdn/${pathSegment}/index.m3u8`
-              : `https://streamfree.top/live-origin/${pathSegment}/index.m3u8`;
-            targetUrl = `${hlsPath}?_t=${t._t}&_e=${t._e}&_n=${t._n}`;
+            const server = (streamKeyData && streamKeyData.server_name) || 'origin';
+            const prefix = server === 'externalcdn' ? 'live-externalcdn' : server !== 'origin' ? 'live-cdn' : 'live';
+            targetUrl = `${new URL(embedUrl).origin}/${prefix}/${variant}/index.m3u8?${signedQuery(t)}`;
+            isOwnSigned = true;
           }
 
-          // External URLs are signed by a third party, so only our own signed
-          // paths advertise renewal.
-          const isOwnSigned = targetUrl.includes('streamfree.top/live-');
-          const proxyUrl = manifestProxyUrl({
-            url: targetUrl,
-            referer: embedUrl,
-            origin: 'https://streamfree.top',
-            renew: isOwnSigned ? 'streamfree' : null,
-            embed: embedUrl,
-          });
-          const label = src.suffix ? `StreamFree S${src.srcNum} (${bestQuality})` : `StreamFree (${bestQuality})`;
-
+          const quality = src.quality || variant;
           streams.push(new StreamEntity({
             name: 'StreamFree',
-            title: label,
-            url: proxyUrl,
+            title: `StreamFree (${quality})`,
+            url: manifestProxyUrl({
+              url: targetUrl,
+              referer: embedUrl,
+              origin: new URL(embedUrl).origin,
+              renew: isOwnSigned ? 'streamfree' : null,
+              embed: embedUrl,
+            }),
             behaviorHints: { notWebReady: true },
-            resolution: bestQuality
+            resolution: quality
           }));
         } catch (srcErr) {
-          console.warn(`[StreamFree] Failed source ${src.srcNum} for ${sourceId}:`, srcErr.message);
+          console.warn(`[StreamFree] Failed source ${src.url}:`, srcErr.message);
         }
       }
-
       return streams;
     } catch (error) {
       console.error(`[${this.name}] resolveStream failed for ${sourceId}:`, error.message);

@@ -137,11 +137,12 @@ describe('DliveProvider schedule failure fallback', () => {
 
   it('only counts a schedule fetch as a success when it holds events', async () => {
     const p = new DliveProvider(makeCradle());
-    const answers = ['<html>maintenance</html>', SCHEDULE];
     const seen = [];
-    p.proxyFetch = async (url) => { seen.push(url); return res({ body: answers.shift() }); };
+    p.proxyFetch = async (url) => { seen.push(url); return res({ body: '<html>maintenance</html>' }); };
+    await expect(p.fetchSchedule.fire()).rejects.toThrow('schedule contained no events');
+    p.proxyFetch = async (url) => { seen.push(url); return res({ body: SCHEDULE }); };
     expect(await p.fetchSchedule.fire()).toBe(SCHEDULE);
-    expect(seen).toEqual(['https://dlive.sx/index.php', 'https://dlstreams.st/index.php']);
+    expect(seen).toEqual(['https://thedaddy.li/index.php', 'https://thedaddy.li/index.php']);
   });
 });
 
@@ -278,9 +279,10 @@ describe('DliveProvider channel probing', () => {
     p = new DliveProvider(makeCradle());
   });
 
-  it('probes the cast mirror first, the dead-prone dembed folders last, dlive.sx before dlstreams.st', () => {
-    expect(p.folders).toEqual(['cast', 'player', 'casting', 'plus', 'watch', 'stream']);
-    expect(p.baseDomains).toEqual(['https://dlive.sx', 'https://dlstreams.st']);
+  it('probes only the non-cloaked folders, player before cast, on thedaddy.li', () => {
+    expect(p.folders).toEqual(['player', 'cast', 'plus', 'casting']);
+    expect(p.baseDomains).toEqual(['https://thedaddy.li']);
+    expect(DliveProvider.BASE_URL).toBe('https://thedaddy.li');
   });
 
   it('stops at the first folder that yields a playing manifest', async () => {
@@ -291,19 +293,19 @@ describe('DliveProvider channel probing', () => {
 
     const r = await p._resolveChannel('91');
     expect(r).toEqual({ m3u8: 'https://cdn.example/a.m3u8', referer: 'https://emb.example/', embedUrl: 'https://emb.example/e/1' });
-    expect(probed).toEqual(['https://dlive.sx/cast', 'https://dlive.sx/player']);
+    expect(probed).toEqual(['https://thedaddy.li/player']);
   });
 
   it('moves on to the next folder when an embed has no manifest', async () => {
     p._playerEmbedUrl = async (id, base, folder) => `https://emb.example/${folder}`;
-    p.extractM3u8 = async (embed) => (embed.endsWith('/watch') ? { m3u8: 'https://cdn.example/w.m3u8', referer: 'https://emb.example/' } : null);
+    p.extractM3u8 = async (embed) => (embed.endsWith('/plus') ? { m3u8: 'https://cdn.example/w.m3u8', referer: 'https://emb.example/' } : null);
     p._manifestPlays = async () => true;
-    expect((await p._resolveChannel('91')).embedUrl).toBe('https://emb.example/watch');
+    expect((await p._resolveChannel('91')).embedUrl).toBe('https://emb.example/plus');
   });
 
   it('moves on when a manifest does not play and never retries the same embed on another mirror', async () => {
     const extracted = [];
-    p._playerEmbedUrl = async (id, base, folder) => (folder === 'cast' ? 'https://dead.example/e/1' : folder === 'stream' ? 'https://ok.example/e/1' : null);
+    p._playerEmbedUrl = async (id, base, folder) => (folder === 'player' ? 'https://dead.example/e/1' : folder === 'casting' ? 'https://ok.example/e/1' : null);
     p.extractM3u8 = async (embed) => { extracted.push(embed); return { m3u8: `${embed}.m3u8`, referer: 'https://x/' }; };
     p._manifestPlays = async (m3u8) => m3u8.startsWith('https://ok.example');
 
@@ -422,20 +424,20 @@ describe('DliveProvider channel probing', () => {
 
   it('skips the cloaked TikTok web player iframe', async () => {
     p.proxyFetch = async () => res({ body: '<iframe src="https://daddyliveplayer.st/embed/1"></iframe>' });
-    expect(await p._playerEmbedUrl('1', 'https://dlive.sx', 'cast')).toBeNull();
+    expect(await p._playerEmbedUrl('1', 'https://thedaddy.li', 'cast')).toBeNull();
   });
 
   it('resolves protocol-relative and root-relative iframes against the mirror', async () => {
     p.proxyFetch = async () => res({ body: '<iframe src="//emb.example/e/1"></iframe>' });
-    expect(await p._playerEmbedUrl('1', 'https://dlive.sx', 'cast')).toBe('https://emb.example/e/1');
+    expect(await p._playerEmbedUrl('1', 'https://thedaddy.li', 'cast')).toBe('https://emb.example/e/1');
     p.proxyFetch = async () => res({ body: '<iframe src="/premium/1.php"></iframe>' });
-    expect(await p._playerEmbedUrl('1', 'https://dlive.sx', 'cast')).toBe('https://dlive.sx/premium/1.php');
+    expect(await p._playerEmbedUrl('1', 'https://thedaddy.li', 'cast')).toBe('https://thedaddy.li/premium/1.php');
   });
 
   it('falls back to the web player when no folder yields a manifest', async () => {
     p._resolveChannel = async () => null;
     const [s] = await p.resolveStream('91', 'football', 'A vs B', { names: ['Sky'] });
-    expect(s.externalUrl).toBe('https://dlive.sx/watch.php?id=91');
+    expect(s.externalUrl).toBe('https://thedaddy.li/watch.php?id=91');
     expect(s.title).toBe('A vs B (Sky) (Web Player)');
   });
 });

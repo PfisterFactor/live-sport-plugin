@@ -13,6 +13,7 @@ const { parsePlaylist } = require('../services/m3u8');
 const renewal = require('../services/StreamRenewal');
 const guard = require('../services/OutboundUrlGuard');
 const net = require('net');
+const { decodePngSegment } = require('../services/PngSegmentDecoder');
 
 const MANIFEST_TTL_MS = 3000;
 const MANIFEST_CACHE_MAX = 100;
@@ -159,7 +160,7 @@ function setPlaylistHeaders(res) {
  * absolutizes chunk URLs against the manifest they came from, and routes nested
  * playlists back through this proxy.
  */
-function rewriteManifest(out, manifestUrl, referer, origin, descriptor) {
+function rewriteManifest(out, manifestUrl, referer, origin, descriptor, png = false) {
   const { targetDuration, totalDuration } = parsePlaylist(out);
   const ttlMs = targetDuration ? (targetDuration * 1000) / 2 : MANIFEST_TTL_MS;
 
@@ -198,6 +199,7 @@ function rewriteManifest(out, manifestUrl, referer, origin, descriptor) {
 
     if (isMaster) {
       let child = `/api/manifest?url=${encodeURIComponent(absoluteUrl)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}`;
+      if (png) child += '&png=1';
       if (descriptor) {
         // `rel` lets a child playlist be rebuilt against a re-minted parent.
         child += `&renew=${encodeURIComponent(descriptor.source)}`
@@ -206,6 +208,10 @@ function rewriteManifest(out, manifestUrl, referer, origin, descriptor) {
           + `&rel=${encodeURIComponent(l)}`;
       }
       return child;
+    }
+
+    if (png) {
+      return `/api/segment?url=${encodeURIComponent(absoluteUrl)}&referer=${encodeURIComponent(referer)}&origin=${encodeURIComponent(origin)}`;
     }
 
     if ((absoluteUrl.includes('.image') || absoluteUrl.includes('.js')) && !absoluteUrl.includes('.ts') && !absoluteUrl.includes('.m3u8')) {
@@ -217,14 +223,58 @@ function rewriteManifest(out, manifestUrl, referer, origin, descriptor) {
   return { body: rewritten.join('\n'), ttlMs };
 }
 
-/** Mounts GET /api/manifest on the given Express app. */
+const SEGMENT_TIMEOUT_MS = 15000;
+const SEGMENT_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Fetches one PNG-wrapped segment and returns the MPEG-TS inside. The URL is
+ * checked by the same SSRF guard as manifests and redirects are not followed.
+ */
+async function fetchDecodedSegment(targetUrl, referer, origin) {
+  await guardedUrl(targetUrl);
+  const res = await fetch(targetUrl, {
+    headers: { Referer: referer, Origin: origin, 'User-Agent': impitClient.BROWSER_UA },
+    redirect: 'error',
+    signal: AbortSignal.timeout(SEGMENT_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  const body = Buffer.from(await res.arrayBuffer());
+  if (body.length > SEGMENT_MAX_BYTES) throw new Error('Segment too large');
+  return decodePngSegment(body);
+}
+
+/** Mounts GET /api/manifest and GET /api/segment on the given Express app. */
 function mount(app) {
+  app.get('/api/segment', async (req, res) => {
+    const targetUrl = req.query.url;
+    const referer = req.query.referer || '';
+    const origin = req.query.origin || '';
+    if (!parseSafeTargetUrl(targetUrl)) return res.status(400).send('Invalid url');
+    try {
+      const ts = await fetchDecodedSegment(targetUrl, referer, origin);
+      res.setHeader('Content-Type', 'video/mp2t');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'public, max-age=60');
+      res.send(ts);
+    } catch (err) {
+      res.setHeader('Cache-Control', 'no-store');
+      if (err.blocked) return res.status(403).send('Blocked outbound URL');
+      console.error('[ManifestProxy] Segment error:', err.message);
+      res.status(502).send('Segment proxy error: ' + err.message);
+    }
+  });
+
   app.get('/api/manifest', async (req, res) => {
     const targetUrl = req.query.url;
     const referer = req.query.referer || 'https://embed.st/';
     const origin = req.query.origin || 'https://embed.st';
     const renewSource = req.query.renew;
     const renewEmbed = req.query.embed;
+    const png = req.query.png === '1';
     const renewRel = typeof req.query.rel === 'string' ? req.query.rel : null;
 
     if (!targetUrl) return res.status(400).send('Missing url');
@@ -241,7 +291,7 @@ function mount(app) {
     const renewBase = renewable && typeof req.query.base === 'string' ? req.query.base : targetUrl;
     const descriptor = renewable ? { source: renewSource, embed: renewEmbed, base: renewBase } : null;
 
-    const cacheKey = `${targetUrl}|${referer}|${origin}`;
+    const cacheKey = `${targetUrl}|${referer}|${origin}|${png ? 'png' : ''}`;
     const entry = manifestCacheGet(cacheKey);
     if (entry && entry.negative) {
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -287,7 +337,7 @@ function mount(app) {
             out = await fetchUpstreamManifest(manifestUrl, manifestReferer, origin);
           }
 
-          const { body, ttlMs } = rewriteManifest(out, manifestUrl, manifestReferer, origin, descriptor);
+          const { body, ttlMs } = rewriteManifest(out, manifestUrl, manifestReferer, origin, descriptor, png);
           manifestCacheSet(cacheKey, body, ttlMs);
           return body;
         })().finally(() => {
@@ -317,4 +367,4 @@ function mount(app) {
   });
 }
 
-module.exports = { mount, parseSafeTargetUrl };
+module.exports = { mount, parseSafeTargetUrl, rewriteManifest, fetchDecodedSegment };

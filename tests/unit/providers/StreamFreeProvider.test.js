@@ -1,23 +1,20 @@
-const { describe, it, expect, beforeEach, afterEach, afterAll } = require('bun:test');
-const impitClient = require('../../../src/impitClient');
+const { describe, it, expect } = require('bun:test');
 const StreamFreeProvider = require('../../../src/providers/StreamFreeProvider');
 const { makeCradle, res } = require('./fixtures/helpers');
 const { BASE_URL } = require('../../../src/config');
 
-const realSafeFetch = impitClient.safeFetch;
-const noStatus = async () => ({ ok: false, status: 500, text: async () => '', json: async () => ({}) });
-let statusImpl = noStatus;
-impitClient.safeFetch = (url, opts) => statusImpl(url, opts);
 
-afterAll(() => { impitClient.safeFetch = realSafeFetch; });
 function tokenHtml(tokens) {
   return `<html><script>const _0x = ${JSON.stringify(tokens)};\nplay(_0x);</script></html>`;
 }
 
-function makeProvider({ list, embeds = {}, streamKey } = {}) {
+function makeProvider({ list, embeds = {}, streamKey, sources } = {}) {
   const p = new StreamFreeProvider(makeCradle());
   p.proxyFetch = async (url) => {
     if (url === p.apiUrl) return res({ json: list });
+    if (url.startsWith('https://streamfree.top/api/v1/sources/')) {
+      return sources ? res({ json: { sources } }) : res({ status: 500, body: '' });
+    }
     if (url.startsWith('https://streamfree.top/get-stream-key/')) {
       return streamKey ? res({ json: streamKey }) : res({ status: 500, body: '' });
     }
@@ -65,75 +62,79 @@ describe('StreamFreeProvider.getMatches', () => {
   });
 });
 
+const EMBED = 'https://strmfree.st/embed/football/nfl11080p';
+const EMBED2 = 'https://strmfree.st/embed/football/nfl11080p2';
+const tok = (n) => ({ _t: `t${n}`, _ta: `ta${n}`, _e: 1000 + n, _s: `s${n}`, _sa: `sa${n}` });
+const tokens = { nfl11080p: tok(1), nfl11080p2: tok(2), nfl1720p: { _t: null } };
+const query = (n) => `_t=t${n}&_ta=ta${n}&_e=${1000 + n}&_s=s${n}&_sa=sa${n}`;
+const targetOf = (s) => decodeURIComponent(s.url.split('url=')[1].split('&referer')[0]);
+
 describe('StreamFreeProvider.resolveStream', () => {
-  beforeEach(() => {
-    statusImpl = async () => ({ ok: false, status: 500, text: async () => '', json: async () => ({}) });
-  });
-  afterEach(() => {
-    statusImpl = async () => ({ ok: false, status: 500, text: async () => '', json: async () => ({}) });
-  });
-
-  const tokens = {
-    '720p': { _t: 't7', _e: 'e7', _n: 'n7' },
-    '1080p': { _t: 't10', _e: 'e10', _n: 'n10' },
-    '480p': { _t: null },
-  };
-
-  it('builds one stream per available source using each source suffix', async () => {
-    statusImpl = async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '',
-      json: async () => ({ sources: { 1: { available: true, qualities: { '720p': true } }, 2: { available: true, qualities: {} }, 3: { available: false } } }),
-    });
-    const embeds = {
-      'https://streamfree.top/embed/football/nfl1': tokenHtml(tokens),
-      'https://streamfree.top/embed/football/nfl12': tokenHtml(tokens),
-    };
-    const streams = await makeProvider({ embeds, streamKey: { server_name: 'origin' } }).resolveStream('nfl1', 'football', 'x');
-    expect(streams.map((s) => s.title)).toEqual(['StreamFree (720p)', 'StreamFree S2 (1080p)']);
-    expect(streams[0].resolution).toBe('720p');
-    const target = decodeURIComponent(streams[0].url.split('url=')[1].split('&referer')[0]);
-    expect(target).toBe('https://streamfree.top/live-origin/nfl1720p/index.m3u8?_t=t7&_e=e7&_n=n7');
-    const target2 = decodeURIComponent(streams[1].url.split('url=')[1].split('&referer')[0]);
-    expect(target2).toBe('https://streamfree.top/live-origin/nfl11080p2/index.m3u8?_t=t10&_e=e10&_n=n10');
+  it('builds one stream per live source variant with its quality label', async () => {
+    const sources = [
+      { quality: 'FHD', url: EMBED, live: true },
+      { quality: 'HD', url: EMBED2, live: true },
+      { quality: 'SD', url: 'https://strmfree.st/embed/football/nfl1540p', live: false },
+    ];
+    const embeds = { [EMBED]: tokenHtml(tokens), [EMBED2]: tokenHtml(tokens) };
+    const streams = await makeProvider({ sources, embeds, streamKey: { server_name: 'externalcdn' } }).resolveStream('nfl1');
+    expect(streams.map((s) => s.title)).toEqual(['StreamFree (FHD)', 'StreamFree (HD)']);
+    expect(streams[0].resolution).toBe('FHD');
+    expect(targetOf(streams[0])).toBe(`https://strmfree.st/live-externalcdn/nfl11080p/index.m3u8?${query(1)}`);
+    expect(targetOf(streams[1])).toBe(`https://strmfree.st/live-externalcdn/nfl11080p2/index.m3u8?${query(2)}`);
     expect(streams[0].url.startsWith(`${BASE_URL}/api/manifest?`)).toBe(true);
   });
 
-  it('falls back to source 1 when stream-status is unavailable and picks the highest quality', async () => {
-    const embeds = { 'https://streamfree.top/embed/soccer/sc1': tokenHtml(tokens) };
-    const [s] = await makeProvider({ embeds, streamKey: { server_name: 'origin' } }).resolveStream('sc1', 'soccer', 'x');
-    expect(s.title).toBe('StreamFree (1080p)');
-  });
-
-  it('uses the CDN path when the stream key names a non-origin server', async () => {
-    const embeds = { 'https://streamfree.top/embed/soccer/sc1': tokenHtml(tokens) };
-    const [s] = await makeProvider({ embeds, streamKey: { server_name: 'edge7' } }).resolveStream('sc1', 'soccer', 'x');
-    expect(decodeURIComponent(s.url)).toContain('https://streamfree.top/live-cdn/sc11080p/index.m3u8');
+  it('uses the CDN path for other servers and the bare live path for origin', async () => {
+    const sources = [{ quality: 'FHD', url: EMBED, live: true }];
+    const embeds = { [EMBED]: tokenHtml(tokens) };
+    const [cdn] = await makeProvider({ sources, embeds, streamKey: { server_name: 'edge7' } }).resolveStream('nfl1');
+    expect(targetOf(cdn)).toContain('https://strmfree.st/live-cdn/nfl11080p/index.m3u8');
+    const [origin] = await makeProvider({ sources, embeds, streamKey: { server_name: 'origin' } }).resolveStream('nfl1');
+    expect(targetOf(origin)).toContain('https://strmfree.st/live/nfl11080p/index.m3u8');
+    const [noKey] = await makeProvider({ sources, embeds }).resolveStream('nfl1');
+    expect(targetOf(noKey)).toContain('/live/nfl11080p/index.m3u8');
   });
 
   it('prefers an external url verbatim when the stream key marks the event external', async () => {
-    const embeds = { 'https://streamfree.top/embed/soccer/sc1': tokenHtml(tokens) };
-    const [s] = await makeProvider({ embeds, streamKey: { is_external: true, external_url: 'https://other.tv/live.m3u8' } }).resolveStream('sc1', 'soccer', 'x');
-    expect(decodeURIComponent(s.url.split('url=')[1].split('&referer')[0])).toBe('https://other.tv/live.m3u8');
+    const sources = [{ quality: 'FHD', url: EMBED, live: true }];
+    const embeds = { [EMBED]: tokenHtml(tokens) };
+    const [s] = await makeProvider({ sources, embeds, streamKey: { is_external: true, external_url: 'https://other.tv/live.m3u8' } }).resolveStream('nfl1');
+    expect(targetOf(s)).toBe('https://other.tv/live.m3u8');
+    expect(s.url).not.toContain('renew=');
   });
 
-  it('still resolves with the origin path when get-stream-key fails', async () => {
-    const embeds = { 'https://streamfree.top/embed/soccer/sc1': tokenHtml(tokens) };
-    const [s] = await makeProvider({ embeds }).resolveStream('sc1', 'soccer', 'x');
-    expect(decodeURIComponent(s.url)).toContain('/live-origin/sc11080p/index.m3u8');
+  it('skips variants missing from the embed token map or without a token', async () => {
+    const e720 = 'https://strmfree.st/embed/football/nfl1720p';
+    const e999 = 'https://strmfree.st/embed/football/nfl1999p';
+    const sources = [
+      { quality: 'FHD', url: EMBED, live: true },
+      { quality: 'HD', url: e720, live: true },
+      { quality: 'X', url: e999, live: true },
+    ];
+    const embeds = { [EMBED]: tokenHtml(tokens), [e720]: tokenHtml(tokens), [e999]: '<html>blocked</html>' };
+    const streams = await makeProvider({ sources, embeds }).resolveStream('nfl1');
+    expect(streams.map((s) => s.title)).toEqual(['StreamFree (FHD)']);
   });
 
-  it('skips sources whose embed page has no token blob or no usable token', async () => {
-    const embeds = {
-      'https://streamfree.top/embed/soccer/sc1': '<html>blocked</html>',
-      'https://streamfree.top/embed/soccer/sc2': tokenHtml({ '480p': { _t: null } }),
-    };
-    expect(await makeProvider({ embeds }).resolveStream('sc1', 'soccer', 'x')).toEqual([]);
-    expect(await makeProvider({ embeds }).resolveStream('sc2', 'soccer', 'x')).toEqual([]);
+  it('returns [] when the sources lookup or the embed fetch fails', async () => {
+    expect(await makeProvider({}).resolveStream('nfl1')).toEqual([]);
+    expect(await makeProvider({ sources: [{ quality: 'FHD', url: EMBED, live: true }] }).resolveStream('nfl1')).toEqual([]);
+  });
+});
+
+describe('StreamFreeProvider.refreshSignedUrl', () => {
+  const dead = 'https://strmfree.st/live-externalcdn/nfl11080p2/index.m3u8?_t=old&_ta=old&_e=1&_s=old&_sa=old';
+
+  it('re-signs the dead URL with the token entry for its exact variant', async () => {
+    const p = makeProvider({ embeds: { [EMBED2]: tokenHtml(tokens) } });
+    const out = await p.refreshSignedUrl(EMBED2, dead);
+    expect(out).toEqual({ m3u8: `https://strmfree.st/live-externalcdn/nfl11080p2/index.m3u8?${query(2)}`, referer: EMBED2 });
   });
 
-  it('returns [] when the embed fetch fails', async () => {
-    expect(await makeProvider({ embeds: {} }).resolveStream('sc1', 'soccer', 'x')).toEqual([]);
+  it('returns null when the variant is absent or the page has no tokens', async () => {
+    expect(await makeProvider({ embeds: { [EMBED2]: tokenHtml({ other: tok(1) }) } }).refreshSignedUrl(EMBED2, dead)).toBeNull();
+    expect(await makeProvider({ embeds: { [EMBED2]: '<html></html>' } }).refreshSignedUrl(EMBED2, dead)).toBeNull();
+    expect(await makeProvider({ embeds: { [EMBED2]: tokenHtml(tokens) } }).refreshSignedUrl(EMBED2, 'not a url')).toBeNull();
   });
 });

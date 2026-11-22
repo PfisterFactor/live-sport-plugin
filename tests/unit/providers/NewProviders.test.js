@@ -169,8 +169,8 @@ describe('DliveProvider schedule parsing', () => {
     p._playerEmbedUrl = async () => null;
     const streams = await p.resolveStream('35,38', 'football', 'Celtic vs Rangers');
     expect(streams.map(s => s.externalUrl)).toEqual([
-      'https://dlive.sx/watch.php?id=35',
-      'https://dlive.sx/watch.php?id=38',
+      'https://thedaddy.li/watch.php?id=35',
+      'https://thedaddy.li/watch.php?id=38',
     ]);
   });
 
@@ -283,6 +283,6 @@ describe('StreamCornerProvider', () => {
     const streams = await p.resolveStream('alpha/x', 'football', 'Match');
     expect(streams).toHaveLength(1);
     expect(streams[0].url).toBe('https://cdn.example/a.m3u8');
-    expect(streams[0].behaviorHints.proxyHeaders.request.Referer).toBe('https://streamcorner.st/');
+    expect(streams[0].behaviorHints.proxyHeaders.request.Referer).toBe('https://streamcorner.cloud/');
   });
 });
