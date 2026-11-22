@@ -4,7 +4,7 @@ const { DEFAULT_UA } = BaseProvider;
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
 const { extractTeamsFromTitle } = require('../services/TeamNameExtractor');
-const { manifestProxyUrl } = require('../proxyUrl');
+const { manifestProxyUrl, dashHlsUrl } = require('../proxyUrl');
 
 const DEFAULT_REFERER = 'http://www.fawanews.sc/';
 const DEFAULT_ORIGIN = 'http://www.fawanews.sc';
@@ -72,9 +72,10 @@ function applyHeaderPairs(suffix, headers) {
  * AK47 / hellobabu app backend. Event lists and per-event link lists are
  * obfuscated: base64 -> swap adjacent byte pairs -> reverse -> base64 ->
  * AES-128-CBC -> JSON. Two public M3U feeds (fawasp / axsp) add extra direct
- * channels with #EXTVLCOPT headers. DASH/ClearKey and embed.st/WASM links are
- * dropped; plain HLS survives, and embedindia-family embed tokens resolve
- * through EmbedIndiaProvider.
+ * channels with #EXTVLCOPT headers. ClearKey DASH channels of the encrypted
+ * feeds play through /api/dash (decrypted and relayed by this server); DASH
+ * without a usable key and embed.st/WASM links are dropped, plain HLS
+ * survives, and embedindia-family embed tokens resolve through EmbedIndiaProvider.
  */
 class Ak47LiveProvider extends BaseProvider {
   constructor(opts = {}) {
@@ -383,6 +384,37 @@ class Ak47LiveProvider extends BaseProvider {
     })];
   }
 
+  /**
+   * A pro/*.txt row with an .mpd `link` ("<mpd>|k=v&k=v") and a ClearKey (`api`
+   * "<kid>:<key>", or `key`/`kid`) as a relayed HLS stream. Null when the row is
+   * not ClearKey DASH or its key is not 32 hex chars.
+   */
+  _clearKeyDash(selected, matchTitle, channelLabel) {
+    const [mpdUrl, ...suffix] = String(selected.link || '').split('|');
+    if (!/\.mpd(\?|$)/i.test(mpdUrl.trim())) return null;
+
+    const [kid, key] = typeof selected.api === 'string' && selected.api.includes(':')
+      ? selected.api.trim().split(':')
+      : [selected.kid, selected.key];
+    const linkHeaders = {};
+    applyHeaderPairs(suffix.join('|'), linkHeaders);
+    const url = dashHlsUrl({
+      mpdUrl: mpdUrl.trim(),
+      key: String(key || '').trim(),
+      kid: String(kid || '').trim(),
+      headers: { 'User-Agent': linkHeaders.userAgent || DEFAULT_UA, Referer: linkHeaders.referer, Origin: linkHeaders.origin },
+    });
+    if (!url) return null;
+
+    return new StreamEntity({
+      name: this.name,
+      title: `${matchTitle || 'Live Event'} (${channelLabel})`,
+      url,
+      behaviorHints: { notWebReady: true },
+      resolution: 'FHD',
+    });
+  }
+
   /** Resolve one source (an encrypted pro/*.txt channel or a direct playlist URL) into a proxied HLS stream. */
   async resolveStream(sourceId, matchCategory, matchTitle, src = {}) {
     let streamUrl = src.id || sourceId;
@@ -405,6 +437,8 @@ class Ak47LiveProvider extends BaseProvider {
             : null;
           if (selected) {
             channelLabel = selected.name ? selected.name.trim() : channelLabel;
+            const dash = this._clearKeyDash(selected, matchTitle, channelLabel);
+            if (dash) return [dash];
             if (selected.drm_scheme || selected.key || selected.kid) return [];
             const embedUrl = selected.link ? '' : this._embedIndiaUrl(selected);
             if (embedUrl) return await this._resolveEmbedIndia(embedUrl, matchTitle, channelLabel);

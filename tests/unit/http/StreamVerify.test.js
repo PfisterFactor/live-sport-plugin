@@ -3,6 +3,7 @@ const { describe, it, expect, beforeEach, afterEach, spyOn } = require('bun:test
 const impitClient = require('../../../src/impitClient');
 const { verifyStreams } = require('../../../src/streams');
 const M3U8ParserService = require('../../../src/services/M3U8ParserService');
+const { PORT } = require('../../../src/config');
 
 const PLAYLIST = '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.0,\nseg0.ts\n';
 const WRONG_FAMILY_REFERER = 'https://wrong-family.example/';
@@ -162,5 +163,32 @@ describe('verifyStreams 403/401 Referer repair', () => {
     const out = await verifyStreams([bare], 'k', parser, cache);
     expect(out).toEqual([bare]);
     expect(cache.failures).toBe(0);
+  });
+});
+
+describe('verifyStreams relayed DASH', () => {
+  const dashStream = () => ({
+    url: 'https://addon.example/api/dash/index.m3u8?d=abc.def',
+    name: 'Ak47Live',
+    title: 'A vs B (TSN2)',
+    behaviorHints: { notWebReady: true },
+  });
+
+  it('probes the playlist on loopback and keeps a stream that answers with HLS', async () => {
+    safeFetch.mockResolvedValue(ok('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8329242,RESOLUTION=1920x1080\nv.m3u8\n'));
+    const cache = makeCache();
+    const out = await verifyStreams([dashStream()], 'ak47:m:s', parser, cache);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].resolution).toBe('1920x1080');
+    expect(safeFetch.mock.calls[0][0]).toBe(`http://127.0.0.1:${PORT}/api/dash/index.m3u8?d=abc.def`);
+    expect(cache.successes).toBe(1);
+  });
+
+  it('drops a relayed stream whose MPD cannot be converted (502)', async () => {
+    safeFetch.mockResolvedValue(status(502));
+    const cache = makeCache();
+    expect(await verifyStreams([dashStream()], 'ak47:m:s', parser, cache)).toHaveLength(0);
+    expect(cache.failures).toBe(1);
   });
 });

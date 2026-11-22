@@ -2,7 +2,10 @@ const { request } = require('undici');
 const BaseProvider = require('./BaseProvider');
 const MatchEntity = require('../domain/MatchEntity');
 const StreamEntity = require('../domain/StreamEntity');
-const { manifestProxyUrl } = require('../proxyUrl');
+const { manifestProxyUrl, dashHlsUrl } = require('../proxyUrl');
+
+/** DASH manifests; without a ClearKey they cannot be played, so the row is skipped. */
+const DASH_RE = /\.mpd(\?|$)/i;
 
 const DEFAULT_UA = BaseProvider.DEFAULT_UA;
 
@@ -67,13 +70,15 @@ function parseDelimited(line) {
 
 /**
  * Parses an M3U playlist into event rows: { tvgId, group, logo, lang, rawTitle,
- * tvgName, url, headers }. Headers come from #EXTVLCOPT lines and the
- * pipe-delimited suffix of the URL.
+ * tvgName, url, headers, clearKey }. Headers come from #EXTVLCOPT lines and the
+ * pipe-delimited suffix of the URL; `clearKey` ({kid, key} or null) from a
+ * #KODIPROP license_key line ("<kid>:<key>").
  */
 function parsePlaylist(text) {
   const rows = [];
   let meta = null;
   let opts = {};
+  let clearKey = null;
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
@@ -98,11 +103,15 @@ function parsePlaylist(text) {
       const val = opt.slice(eq + 1);
       if (/referrer/i.test(key)) opts.Referer = val;
       else if (/user-agent/i.test(key)) opts['User-Agent'] = val;
+    } else if (/^#KODIPROP:inputstream\.adaptive\.license_key=/i.test(line)) {
+      const [kid, key] = line.slice(line.indexOf('=') + 1).trim().split(':');
+      clearKey = key ? { kid: kid.trim(), key: key.trim() } : null;
     } else if (line.startsWith('http') && meta) {
       const { url, headers } = parseDelimited(line);
-      if (url) rows.push({ ...meta, url, headers: { ...opts, ...headers } });
+      if (url) rows.push({ ...meta, url, headers: { ...opts, ...headers }, clearKey });
       meta = null;
       opts = {};
+      clearKey = null;
     }
   }
   return rows;
@@ -148,6 +157,7 @@ class SkTechProvider extends BaseProvider {
     for (const row of rows) {
       const title = cleanEventTitle(row.rawTitle, row.tvgName);
       if (!title || GHOST_FIXTURE_RE.test(title) || TEST_ENTRY_RE.test(title) || TEST_URL_RE.test(row.url)) continue;
+      if (DASH_RE.test(row.url) && !row.clearKey) continue;
 
       const tag = (row.rawTitle.match(/\b(1080p|720p|540p|480p|360p|240p|144p)\b/i) || [])[1];
       const resolution = tag ? tag.toUpperCase() : 'HD';
@@ -158,12 +168,13 @@ class SkTechProvider extends BaseProvider {
       const lang = (row.lang || 'English').trim();
       const source = {
         source: this.sourceName,
-        id: `${feedKey}_${row.tvgId || title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24)}_${resolution}_${lang.toLowerCase()}`,
+        id: `${feedKey}_${row.tvgId || title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24)}_${resolution}_${lang.toLowerCase()}${row.clearKey ? '_dash' : ''}`,
         feed: feed.label,
         lang,
         resolution,
         streamUrl: row.url,
         headers: { 'User-Agent': DEFAULT_UA, ...row.headers },
+        clearKey: row.clearKey || undefined,
       };
 
       let event = events.get(key);
@@ -171,7 +182,7 @@ class SkTechProvider extends BaseProvider {
         event = { id: `sktech_${feedKey}_${row.tvgId || events.size}`, title, category, poster: row.logo, league: row.group || `${feed.label} Live`, sources: [] };
         events.set(key, event);
       }
-      if (!event.sources.some((s) => s.feed === feed.label && s.lang === lang && s.resolution === resolution)) {
+      if (!event.sources.some((s) => s.feed === feed.label && s.lang === lang && s.resolution === resolution && Boolean(s.clearKey) === Boolean(source.clearKey))) {
         event.sources.push(source);
       }
     }
@@ -218,17 +229,22 @@ class SkTechProvider extends BaseProvider {
   }
 
   /**
-   * The proxied HLS stream of one language/quality source.
+   * The proxied HLS stream of one language/quality source; a ClearKey DASH
+   * source plays through /api/dash.
    * @returns {Promise<StreamEntity[]>}
    */
   async resolveStream(sourceId, matchCategory, matchTitle, src = {}) {
     if (!src.streamUrl) return [];
     const referer = (src.headers && src.headers.Referer) || 'https://sktech.live/';
+    const url = src.clearKey
+      ? dashHlsUrl({ mpdUrl: src.streamUrl, key: src.clearKey.key, kid: src.clearKey.kid, headers: src.headers })
+      : manifestProxyUrl({ url: src.streamUrl, referer });
+    if (!url) return [];
     const language = src.lang && src.lang.toLowerCase() !== 'english' ? ` - ${src.lang}` : '';
     const stream = new StreamEntity({
       name: this.name,
       title: `${matchTitle} (${src.feed} ${src.resolution}${language})`,
-      url: manifestProxyUrl({ url: src.streamUrl, referer }),
+      url,
       behaviorHints: { notWebReady: true },
       resolution: src.resolution === 'HD' ? 'HD' : src.resolution.toLowerCase(),
     });

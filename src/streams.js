@@ -2,6 +2,7 @@ const container = require('./container');
 const ChannelCountryService = require('./services/ChannelCountryService');
 const { withRetry, isTransientStatus, isTransientError } = require('./services/retry');
 const { parseLanguagePriority, compareStreams } = require('./services/LanguagePriorityService');
+const { PORT } = require('./config');
 
 /**
  * Single source of truth for every selectable stream source: sort priority,
@@ -209,6 +210,13 @@ async function verifyStreams(streams, cacheKey, m3u8Parser, resolveCache) {
         if (urlObj.searchParams.has('origin')) {
           origin = urlObj.searchParams.get('origin');
         }
+      } catch (e) {}
+    } else if (targetUrl.includes('/api/dash/')) {
+      // Relayed DASH is a playlist of this server's own: probe it on loopback
+      // instead of hairpinning through the public URL.
+      try {
+        const own = new URL(targetUrl);
+        targetUrl = `http://127.0.0.1:${PORT}${own.pathname}${own.search}`;
       } catch (e) {}
     }
 

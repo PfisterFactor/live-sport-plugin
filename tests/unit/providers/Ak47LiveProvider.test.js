@@ -3,6 +3,7 @@ const { describe, it, expect, beforeEach, afterEach, setSystemTime } = require('
 const Ak47LiveProvider = require('../../../src/providers/Ak47LiveProvider');
 const { makeCradle, res } = require('./fixtures/helpers');
 const EmbedIndiaProvider = require('../../../src/providers/EmbedIndiaProvider');
+const { verifyPayload } = require('../../../src/services/DashPayload');
 
 const KEY = Buffer.from('az1sUE8zNnNUVXpN', 'ascii');
 const IV = Buffer.from('dz00QVhsNmZZU0Fw', 'ascii');
@@ -131,6 +132,42 @@ describe('Ak47LiveProvider resolveStream', () => {
     expect(new URL(s.url).searchParams.get('referer')).toBe('https://ref.example/');
     expect(await p.resolveStream('http://c.example/a.mpd', 'x', 'T', {})).toEqual([]);
     expect(await p.resolveStream('https://embed.st/a.m3u8', 'x', 'T', {})).toEqual([]);
+  });
+
+  it('plays a ClearKey DASH channel as signed /api/dash HLS carrying the link headers', async () => {
+    const mpd = 'https://otte.cache.aiv-cdn.net/bom-nitro/live/clients/dash/enc/x/out/v1/y/cenc.mpd';
+    const kid = '85b277daf5aae05833fe43a68f587968';
+    const key = 'd52d7e9bc0bcd98787efd547ac91eca0';
+    const p = makeProvider({
+      'pro/nhl.txt': encrypt([
+        { name: 'TSN2 SPORTS FHD', link: `${mpd}|Origin=https://amazon.com&user-agent=UA2`, api: `${kid}:${key}` },
+      ]),
+    });
+    const [s] = await p.resolveStream('pro/nhl.txt#0', 'hockey', 'Bruins vs Leafs', { linksPath: 'pro/nhl.txt', streamIndex: 0 });
+
+    const u = new URL(s.url);
+    expect(u.pathname).toBe('/api/dash/index.m3u8');
+    const verified = verifyPayload(u.searchParams.get('d'));
+    expect(verified.ok).toBe(true);
+    expect(verified.payload).toMatchObject({ mpdUrl: mpd, key, kid });
+    expect(verified.payload.headers).toEqual({ 'User-Agent': 'UA2', Origin: 'https://amazon.com' });
+    expect(verified.payload.e).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect(s.title).toBe('Bruins vs Leafs (TSN2 SPORTS FHD)');
+    expect(s.behaviorHints.notWebReady).toBe(true);
+  });
+
+  it('drops DASH without a usable key and DRM rows', async () => {
+    const mpd = 'https://cdn.example/live/cenc.mpd';
+    const p = makeProvider({
+      'pro/x.txt': encrypt([
+        { name: 'no key', link: mpd },
+        { name: 'short key', link: mpd, api: `${'a'.repeat(32)}:abcd` },
+        { name: 'widevine', link: mpd, drm_scheme: 'widevine', kid: 'k' },
+      ]),
+    });
+    for (const streamIndex of [0, 1, 2]) {
+      expect(await p.resolveStream('pro/x.txt', 'x', 'T', { linksPath: 'pro/x.txt', streamIndex })).toEqual([]);
+    }
   });
 
   it('resolves embedindia-family embed tokens through EmbedIndia with renewal', async () => {

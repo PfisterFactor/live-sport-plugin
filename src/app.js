@@ -132,6 +132,7 @@ app.get('/img', async (req, res) => {
 });
 
 require('./routes/manifestProxy').mount(app);
+require('./routes/dash').mount(app);
 
 // /api/proxy-embed — CORS-safe embed HTML fetcher. The browser cannot fetch
 // embed hosts directly (CORS); SSRF is mitigated by a strict domain allowlist.

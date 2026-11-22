@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Akamai-style live MPD: fixed-duration SegmentTemplate + cbcs protection -->
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:cenc="urn:mpeg:cenc:2013" type="dynamic" availabilityStartTime="2026-10-24T09:00:00+00:00" publishTime="2026-10-24T09:40:00+00:00" minimumUpdatePeriod="PT2S" timeShiftBufferDepth="PT60S" minBufferTime="PT10S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period start="PT0S" id="1">
+    <BaseURL>https://akamai-edge.example.com/dash/live/tennis/</BaseURL>
+    <AdaptationSet id="1" mimeType="video/mp4" segmentAlignment="true" startWithSAP="1">
+      <ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cbcs" cenc:default_KID="FB22-8518-00FB-00E1-6FB1-A1DD-8CA3-997C"/>
+      <SegmentTemplate timescale="12800" media="$RepresentationID$/$Number$.m4s" initialization="$RepresentationID$/init.mp4" duration="25600" startNumber="700000"/>
+      <Representation id="video_360" bandwidth="599968" codecs="avc1.64001E" width="640" height="360" frameRate="25/1"/>
+      <Representation id="video_1080" bandwidth="4200000" codecs="avc1.640028" width="1920" height="1080" frameRate="25/1"/>
+    </AdaptationSet>
+    <AdaptationSet id="2" mimeType="audio/mp4" segmentAlignment="true" startWithSAP="1" lang="eng">
+      <ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cbcs" cenc:default_KID="FB22-8518-00FB-00E1-6FB1-A1DD-8CA3-997C"/>
+      <SegmentTemplate timescale="48000" media="$RepresentationID$/$Number$.m4s" initialization="$RepresentationID$/init.mp4" duration="96000" startNumber="700000"/>
+      <Representation id="audio_eng" bandwidth="129242" codecs="mp4a.40.2" audioSamplingRate="48000"/>
+    </AdaptationSet>
+  </Period>
+</MPD>

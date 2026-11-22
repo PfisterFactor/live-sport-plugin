@@ -1,11 +1,12 @@
 /**
- * proxyUrl.js — builds /api/manifest URLs for providers.
+ * proxyUrl.js — builds /api/manifest and /api/dash URLs for providers.
  *
  * `renew` + `embed` make the stream self-healing: when the signed upstream
  * token dies, the proxy re-mints it from the embed page instead of handing the
  * player a dead link it can never replace. See services/StreamRenewal.js.
  */
 
+const { signPayload, normalizePayload, TOKEN_TTL_SEC } = require('./services/DashPayload');
 const { BASE_URL } = require('./config');
 
 /**
@@ -32,4 +33,20 @@ function manifestProxyUrl({ url, referer, origin, renew, embed, proxySegments })
   return out;
 }
 
-module.exports = { manifestProxyUrl };
+/**
+ * Builds the /api/dash/index.m3u8 URL that plays a ClearKey DASH stream as plain
+ * HLS. Every segment is relayed and decrypted by this server (see routes/dash.js).
+ * @param {object} opts
+ * @param {string} opts.mpdUrl   the .mpd URL
+ * @param {string} opts.key      16-byte content key, 32 hex chars
+ * @param {string} [opts.kid]    key ID, 32 hex chars, dashes allowed
+ * @param {object} [opts.headers] upstream request headers (User-Agent, Referer, Origin)
+ * @returns {string|null} the URL, or null when the URL or key is unusable
+ */
+function dashHlsUrl({ mpdUrl, key, kid, headers }) {
+  const payload = { mpdUrl, key, kid, headers };
+  if (!normalizePayload(payload)) return null;
+  return `${BASE_URL}/api/dash/index.m3u8?d=${signPayload(payload, { ttlSec: TOKEN_TTL_SEC })}`;
+}
+
+module.exports = { manifestProxyUrl, dashHlsUrl };
